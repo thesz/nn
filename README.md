@@ -3,8 +3,8 @@ Learning neural nets in an unusual way
 
 The differences are:
 
-  # Net learns all samples at once,
-  # We use "time" to find minimum.
+  1. Net learns all samples at once,
+  1. We use "time" to find minimum.
 
 Main reference
 ==============
