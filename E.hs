@@ -107,7 +107,7 @@ layer addFree ln inputs = outs
 
 -- |Complete network activation.
 nnet :: Bool -> [Double] -> [Int] -> [EE]
-nnet addFree inputs sizes = f 1 eeinputs sizes
+nnet addFree inputs sizes = softMax $ f 1 eeinputs sizes
 	where
 		eeinputs = map constEE inputs
 		f ln top [] = top
@@ -152,7 +152,7 @@ readTrains n = do
 	return $ sum nns
 
 initValue :: Index -> Double
-initValue is = sum $ zipWith (\i j -> if odd i then j / 100 else j / 30) is [1..]
+initValue is = sum $ zipWith (\i j -> if odd i then j / 1000 else j / 300) is [1..]
 
 type PolyT = [Double]
 
@@ -185,7 +185,7 @@ integration (EE f partials) = (poss, eval f)
 	where
 		poss = Map.mapWithKey (\index -> pintegr $ initValue index) vels
 		vels = Map.map (pintegr 0) accs
-		accs = Map.map eval partials
+		accs = Map.map (pscale (-1) . eval) partials
 		eval (Const c) = c : repeat 0
 		eval (Weight i) = Map.findWithDefault (error $ "no position for "++show i++"???") i poss
 		eval (Bin op a b) = case op of
@@ -199,7 +199,7 @@ integration (EE f partials) = (poss, eval f)
 		eval (Exp e) = pexp $ eval e
 
 find = do
-	e <- readTrains 1000
+	e <- readTrains 400
 	let	(tweights, goal) = integration e
 	putStrLn $ "first coefs from goal: "++show (take 5 goal)
 
