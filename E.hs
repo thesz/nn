@@ -151,4 +151,30 @@ readTrains n = do
 		nns = map (pendigitsTrain simplest) ints
 	return $ sum nns
 
+initValue :: Index -> Double
+initValue is = sum $ zipWith (\i j -> if odd i then j / 10 else j / 3) is [1..]
+
+type PolyT = [Double]
+
+integr :: Double -> PolyT -> PolyT
+integr f0 ft = f0 : zipWith (/) ft [1..]
+
+integration :: EE -> (Map.Map Index PolyT, PolyT)
+integration (EE f partials) = (poss, eval f)
+	where
+		poss = Map.mapWithKey (\index -> integr $ initValue index) vels
+		vels = Map.map (integr 0) accs
+		accs = Map.map eval partials
+		eval (Const c) = c : repeat 0
+		eval (Weight i) = Map.findWithDefault (error $ "no position for "++show i++"???") i poss
+		eval (Bin op a b) = case op of
+			Plus -> zipWith (+) ap bp
+			Minus -> zipWith (-) ap bp
+			_ -> error $ "mul or div!"
+			where
+				ap = eval a
+				bp = eval b
+		eval (Exp e) = error "exp!!! aaaa!!!"
+
+
 t = readTrains 2
