@@ -91,7 +91,7 @@ constEE d = EE (Const d) Map.empty
 weight :: Index -> EE
 weight index = EE (Weight index) (Map.singleton index 1)
 
-softMax :: [EE] -> [EE]
+softMax :: Floating e => [e] -> [e]
 softMax xs = map (\x -> exp x/denom) xs
 	where
 		denom = sum $ map exp xs
@@ -152,7 +152,7 @@ readTrains n = do
 	return $ sum nns
 
 initValue :: Index -> Double
-initValue is = sum $ zipWith (\i j -> if odd i then j / 10 else j / 3) is [1..]
+initValue is = sum $ zipWith (\i j -> if odd i then j / 100 else j / 30) is [1..]
 
 type PolyT = [Double]
 
@@ -198,5 +198,11 @@ integration (EE f partials) = (poss, eval f)
 				bp = eval b
 		eval (Exp e) = pexp $ eval e
 
+find = do
+	e <- readTrains 1000
+	let	(tweights, goal) = integration e
+	putStrLn $ "first coefs from goal: "++show (take 5 goal)
 
-t = readTrains 2
+t = find
+
+main = find
