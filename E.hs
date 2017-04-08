@@ -156,25 +156,47 @@ initValue is = sum $ zipWith (\i j -> if odd i then j / 10 else j / 3) is [1..]
 
 type PolyT = [Double]
 
-integr :: Double -> PolyT -> PolyT
-integr f0 ft = f0 : zipWith (/) ft [1..]
+pintegr :: Double -> PolyT -> PolyT
+pintegr f0 ft = f0 : zipWith (/) ft [1..]
+
+pdiff :: PolyT -> PolyT
+pdiff ft = zipWith (*) [1..] $ tail ft
+
+pscale :: Double -> PolyT -> PolyT
+pscale c = map (c*)
+
+padd, psub, pmul, pdiv :: PolyT -> PolyT -> PolyT
+padd = zipWith (+)
+psub = zipWith (-)
+pmul (a0:a) b@(b0:bs) = a0*b0 : padd (pscale a0 bs) (pmul a b)
+pdiv (a0:a) b@(b0:bs) = c0 : c
+	where
+		c0 = a0/b0
+		c = pdiv (psub a (pscale c0 bs)) b
+
+pexp :: PolyT -> PolyT
+pexp u@(u0:_) = w
+	where
+		exp' x = if abs x > 500 then exp (500 * signum x) else exp x
+		w = pintegr (exp' u0) (pmul (pdiff u) w)
 
 integration :: EE -> (Map.Map Index PolyT, PolyT)
 integration (EE f partials) = (poss, eval f)
 	where
-		poss = Map.mapWithKey (\index -> integr $ initValue index) vels
-		vels = Map.map (integr 0) accs
+		poss = Map.mapWithKey (\index -> pintegr $ initValue index) vels
+		vels = Map.map (pintegr 0) accs
 		accs = Map.map eval partials
 		eval (Const c) = c : repeat 0
 		eval (Weight i) = Map.findWithDefault (error $ "no position for "++show i++"???") i poss
 		eval (Bin op a b) = case op of
-			Plus -> zipWith (+) ap bp
-			Minus -> zipWith (-) ap bp
-			_ -> error $ "mul or div!"
+			Plus -> padd ap bp
+			Minus -> psub ap bp
+			Mul -> pmul ap bp
+			Div -> pdiv ap bp
 			where
 				ap = eval a
 				bp = eval b
-		eval (Exp e) = error "exp!!! aaaa!!!"
+		eval (Exp e) = pexp $ eval e
 
 
 t = readTrains 2
