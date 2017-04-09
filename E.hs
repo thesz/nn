@@ -7,7 +7,7 @@
 module E where
 
 import Control.Monad
-import Control.Monad.State
+import Control.Monad.State.Strict
 
 import qualified Data.Map as Map
 
@@ -194,14 +194,46 @@ pexp u@(S u0 _) = w
 		exp' x = if abs x > 500 then exp (500 * signum x) else exp x
 		w = pintegr (exp' u0) (pmul (pdiff u) w)
 
+type EvalM a = State (Map.Map E PolyT) a
+
+evalEvalM :: EvalM a -> a
+evalEvalM = flip evalState Map.empty
+
+evalE :: Map.Map Index PolyT -> E -> EvalM PolyT
+evalE wm e = do
+	mbP <- liftM (Map.lookup e) get
+	case mbP of
+		Nothing -> do
+			pt <- case e of
+				Const x -> return $ let zs = S 0 zs in S x zs
+				Weight i -> return $ Map.findWithDefault (error $ "no weight for "++show i++"???") i wm
+				Bin op a b -> do
+					ea <- evalE wm a
+					eb <- evalE wm b
+					return $ case op of
+						Plus -> padd ea eb
+						Minus -> psub ea eb
+						Mul -> pmul ea eb
+						Div -> pdiv ea eb
+				Exp e -> liftM pexp $ evalE wm e
+			modify' $ Map.insert e pt
+			return pt
+		Just pt -> return pt
+
 integration :: EE -> (Map.Map Index PolyT, PolyT)
-integration (EE f partials) = (poss, eval f)
+integration (EE f partials) = (Map.map fst possAccs, eval f)
 	where
-		poss = Map.mapWithKey (\index -> pintegr $ initValue index) vels
+		
+		possAccs = Map.mapWithKey build partials
+		build i e = (x,(v,a))
+			where
+				a = pscale (-1) $ eval e
+				v = pintegr 0 a
+				x = pintegr (initValue i) v
 		vels = Map.map (pintegr 0) accs
 		accs = Map.map (pscale (-1) . eval) partials
 		eval (Const c) = let zs = S 0 zs in S c zs
-		eval (Weight i) = Map.findWithDefault (error $ "no position for "++show i++"???") i poss
+		eval (Weight i) = fst $ Map.findWithDefault (error $ "no position for "++show i++"???") i possAccs
 		eval (Bin op a b) = case op of
 			Plus -> padd ap bp
 			Minus -> psub ap bp
