@@ -154,28 +154,42 @@ readTrains n = do
 initValue :: Index -> Double
 initValue is = sum $ zipWith (\i j -> if odd i then j / 1000 else j / 300) is [1..]
 
-type PolyT = [Double]
+data S a = S !a (S a)
+
+instance Functor S where
+	fmap f (S a sa) = S (f a) (fmap f sa)
+
+sZipWith :: (a -> b -> c) -> S a -> S b -> S c
+sZipWith f (S a sa) (S b sb) = S (f a b) $ sZipWith f sa sb
+
+sFrom :: Num a => a -> S a
+sFrom a = S a $ sFrom (a+1)
+
+sToList :: S a -> [a]
+sToList (S a sa) = a : sToList sa
+
+type PolyT = S Double
 
 pintegr :: Double -> PolyT -> PolyT
-pintegr f0 ft = f0 : zipWith (/) ft [1..]
+pintegr f0 ft = S f0 $ sZipWith (/) ft (sFrom 1)
 
 pdiff :: PolyT -> PolyT
-pdiff ft = zipWith (*) [1..] $ tail ft
+pdiff (S _ ft) = sZipWith (*) (sFrom 1) ft
 
 pscale :: Double -> PolyT -> PolyT
-pscale c = map (c*)
+pscale c = fmap (c*)
 
 padd, psub, pmul, pdiv :: PolyT -> PolyT -> PolyT
-padd = zipWith (+)
-psub = zipWith (-)
-pmul (a0:a) b@(b0:bs) = a0*b0 : padd (pscale a0 bs) (pmul a b)
-pdiv (a0:a) b@(b0:bs) = c0 : c
+padd = sZipWith (+)
+psub = sZipWith (-)
+pmul (S a0 a) b@(S b0 bs) = S (a0*b0) (padd (pscale a0 bs) (pmul a b))
+pdiv (S a0 a) b@(S b0 bs) = S c0  c
 	where
 		c0 = a0/b0
 		c = pdiv (psub a (pscale c0 bs)) b
 
 pexp :: PolyT -> PolyT
-pexp u@(u0:_) = w
+pexp u@(S u0 _) = w
 	where
 		exp' x = if abs x > 500 then exp (500 * signum x) else exp x
 		w = pintegr (exp' u0) (pmul (pdiff u) w)
@@ -186,7 +200,7 @@ integration (EE f partials) = (poss, eval f)
 		poss = Map.mapWithKey (\index -> pintegr $ initValue index) vels
 		vels = Map.map (pintegr 0) accs
 		accs = Map.map (pscale (-1) . eval) partials
-		eval (Const c) = c : repeat 0
+		eval (Const c) = let zs = S 0 zs in S c zs
 		eval (Weight i) = Map.findWithDefault (error $ "no position for "++show i++"???") i poss
 		eval (Bin op a b) = case op of
 			Plus -> padd ap bp
@@ -201,7 +215,7 @@ integration (EE f partials) = (poss, eval f)
 find = do
 	e <- readTrains 400
 	let	(tweights, goal) = integration e
-	putStrLn $ "first coefs from goal: "++show (take 5 goal)
+	putStrLn $ "first coefs from goal: "++show (take 5 $ sToList goal)
 
 t = find
 
