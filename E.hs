@@ -11,7 +11,8 @@ import Control.Monad.State
 
 import qualified Data.Map as Map
 
-import qualified Data.Vector as UV
+import qualified Data.Vector as V
+import qualified Data.Vector.Unboxed as UV
 
 import System.IO
 
@@ -204,8 +205,8 @@ pexp u@(S u0 _) = w
 
 type CM a = State (Map.Map E PolyT)
 
-construct :: Map.Map Index Double -> Map.Map Int (UV.Vector Double) -> EE -> (PolyT, Map.Map Index PolyT)
-construct initials inputsArrays (EE e partials) = undefined
+construct :: Map.Map Index Double -> V.Vector (UV.Vector Double) -> V.Vector (UV.Vector Double) -> V.Vector EE -> (PolyT, Map.Map Index PolyT)
+construct initials inputsArrays outputsAraays outputsExprs = undefined
 
 integration :: (Index -> Double) -> (Int -> UV.Vector Double) -> EE -> (Map.Map Index PolyT, PolyT)
 integration initValue input (EE f partials) = (poss, eval f)
