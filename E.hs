@@ -7,9 +7,11 @@
 module E where
 
 import Control.Monad
-import Control.Monad.State.Strict
+import Control.Monad.State
 
 import qualified Data.Map as Map
+
+import qualified Data.Vector as UV
 
 import System.IO
 
@@ -18,17 +20,26 @@ type Index = [Int]
 data E where
 	-- |leaf terms - they do not contain references.
 	Const	:: Double -> E
+	Input	:: Int -> E
 	Weight	:: Index -> E
 	Bin	:: BinOp -> E -> E -> E
 	Exp	:: E -> E
+	Sum	:: E -> E
 	deriving (Eq, Ord, Show)
 
 data BinOp = Plus | Minus | Mul | Div
 	deriving (Eq, Ord, Show)
 
 instance Num E where
+	Const 0.0 + b = b
+	a + Const 0.0 = a
 	a + b = Bin Plus a b
+	a - Const 0.0 = a
 	a - b = Bin Minus a b
+	Const 1.0 * b = b
+	Const 0.0 * b = Const 0.0
+	a * Const 1.0 = a
+	a * Const 0.0 = Const 0.0
 	a * b = Bin Mul a b
 	fromInteger = Const . fromInteger
 	abs = error "no abs for E"
@@ -56,6 +67,9 @@ instance Floating E where
 data EE where
 	EE :: E -> Map.Map Index E -> EE
 	deriving (Eq, Ord, Show)
+
+eFromEE :: EE -> E
+eFromEE (EE e _) = e
 
 instance Num EE where
 	EE ea dsa + EE eb dsb = EE (ea + eb) (Map.unionWith (+) dsa dsb)
@@ -88,6 +102,12 @@ instance Floating EE where
 constEE :: Double -> EE
 constEE d = EE (Const d) Map.empty
 
+inputEE :: Int -> EE
+inputEE i = EE (Input i) Map.empty
+
+sumEE :: EE -> EE
+sumEE (EE e partials) = EE (Sum e) (Map.map Sum partials)
+
 weight :: Index -> EE
 weight index = EE (Weight index) (Map.singleton index 1)
 
@@ -106,53 +126,12 @@ layer addFree ln inputs = outs
 		outs = [ o | j <- [0..], let o = sum [ e*weight [ln, i, j] | (i,e) <- zip [0..] $ add inputs]]
 
 -- |Complete network activation.
-nnet :: Bool -> [Double] -> [Int] -> [EE]
-nnet addFree inputs sizes = softMax $ f 1 eeinputs sizes
+nnet :: Bool -> Int -> [Int] -> [EE]
+nnet addFree inputs sizes = map sumEE $ softMax $ f 1 eeinputs sizes
 	where
-		eeinputs = map constEE inputs
+		eeinputs = map inputEE [0..inputs-1]
 		f ln top [] = top
 		f ln top (n : ns) = f (ln+1) (take n $ layer addFree ln top) ns
-
---------------------------------------------------------------------------------
--- Reading the problem.
-
-pendigitsInputsCount = 16
-pendigitsOutputsCount = 10
-
-pendigits :: ([Double] -> [EE]) -> [Int] -> ([EE], [Double])
-pendigits mk is = (nn, outputs)
-	where
-		inputs = map (fromInteger . fromIntegral) $ init is
-		output = last is
-		nn = mk inputs
-		outputs = map (fromIntegral . fromEnum . (==output)) $ [0..pendigitsOutputsCount - 1]
-
-pendigitsTrain :: ([Double] -> [EE]) -> [Int] -> EE
-pendigitsTrain mk is = sum diff2s
-	where
-		(nn, outs) = pendigits mk is
-		outEEs = map constEE outs
-		diff2s = map (\x -> x*x) $ zipWith (-) nn outEEs
-
-simplest, threeLayers :: [Double] -> [EE]
-simplest is = nnet True is [pendigitsOutputsCount]
-
-threeLayers is = nnet True is [30, 30, pendigitsOutputsCount]
-
-readTrains :: Int -> IO EE
-readTrains n = do
-	text <- readFile "pendigs/pendigits.tra"
-	let	ls = take n $ lines text
-		bls = map (("["++) . (++"]")) ls
-		wls :: [[String]]
-		wls = map (words . map (\c -> if c == ',' then ' ' else c)) ls
-		ints :: [[Int]]
-		ints = map (map read) wls
-		nns = map (pendigitsTrain simplest) ints
-	return $ sum nns
-
-initValue :: Index -> Double
-initValue is = sum $ zipWith (\i j -> if odd i then j / 1000 else j / 300) is [1..]
 
 data S a = S !a (S a)
 
@@ -162,78 +141,73 @@ instance Functor S where
 sZipWith :: (a -> b -> c) -> S a -> S b -> S c
 sZipWith f (S a sa) (S b sb) = S (f a b) $ sZipWith f sa sb
 
-sFrom :: Num a => a -> S a
-sFrom a = S a $ sFrom (a+1)
+sFrom :: Double -> S CV
+sFrom a = S (C a) $ sFrom (a+1)
 
 sToList :: S a -> [a]
 sToList (S a sa) = a : sToList sa
 
-type PolyT = S Double
+data CV = C !Double | V (UV.Vector Double)
+	deriving (Eq, Ord, Show)
 
-pintegr :: Double -> PolyT -> PolyT
-pintegr f0 ft = S f0 $ sZipWith (/) ft (sFrom 1)
+type PolyT = S CV
+
+pintegr :: CV -> PolyT -> PolyT
+pintegr f0 ft = S f0 $ sZipWith svDiv ft (sFrom 1)
+
+svDiv, svMul, svAdd, svSub :: CV -> CV -> CV
+svDiv (C a) (C b) = C $ a / b
+svDiv (C a) (V b) = V $ UV.map (a/) b
+svDiv (V a) (C b) = V $ UV.map (/b) a
+svDiv (V a) (V b) = V $ UV.zipWith (/) a b
+
+svMul (C a) (C b) = C $ a * b
+svMul (C a) (V b) = V $ UV.map (a*) b
+svMul (V a) (C b) = V $ UV.map (*b) a
+svMul (V a) (V b) = V $ UV.zipWith (*) a b
+
+svAdd (C a) (C b) = C $ a + b
+svAdd (C a) (V b) = V $ UV.map (a+) b
+svAdd (V a) (C b) = V $ UV.map (+b) a
+svAdd (V a) (V b) = V $ UV.zipWith (+) a b
+
+svSub (C a) (C b) = C $ a - b
+svSub (C a) (V b) = V $ UV.map (a-) b
+svSub (V a) (C b) = V $ UV.map (\a -> a-b) a
+svSub (V a) (V b) = V $ UV.zipWith (-) a b
 
 pdiff :: PolyT -> PolyT
-pdiff (S _ ft) = sZipWith (*) (sFrom 1) ft
+pdiff (S _ ft) = sZipWith svMul (sFrom 1) ft
 
-pscale :: Double -> PolyT -> PolyT
-pscale c = fmap (c*)
+pscale :: CV -> PolyT -> PolyT
+pscale c = fmap (svMul c)
 
 padd, psub, pmul, pdiv :: PolyT -> PolyT -> PolyT
-padd = sZipWith (+)
-psub = sZipWith (-)
-pmul (S a0 a) b@(S b0 bs) = S (a0*b0) (padd (pscale a0 bs) (pmul a b))
+padd = sZipWith svAdd
+psub = sZipWith svSub
+pmul (S a0 a) b@(S b0 bs) = S (svMul a0 b0) (padd (pscale a0 bs) (pmul a b))
 pdiv (S a0 a) b@(S b0 bs) = S c0  c
 	where
-		c0 = a0/b0
+		c0 = svDiv a0 b0
 		c = pdiv (psub a (pscale c0 bs)) b
 
 pexp :: PolyT -> PolyT
 pexp u@(S u0 _) = w
 	where
 		exp' x = if abs x > 500 then exp (500 * signum x) else exp x
-		w = pintegr (exp' u0) (pmul (pdiff u) w)
+		svExp (C x) = C $ exp' x
+		svExp (V v) = V $ UV.map exp' v
+		w = pintegr (svExp u0) (pmul (pdiff u) w)
 
-type EvalM a = State (Map.Map E PolyT) a
-
-evalEvalM :: EvalM a -> a
-evalEvalM = flip evalState Map.empty
-
-evalE :: Map.Map Index PolyT -> E -> EvalM PolyT
-evalE wm e = do
-	mbP <- liftM (Map.lookup e) get
-	case mbP of
-		Nothing -> do
-			pt <- case e of
-				Const x -> return $ let zs = S 0 zs in S x zs
-				Weight i -> return $ Map.findWithDefault (error $ "no weight for "++show i++"???") i wm
-				Bin op a b -> do
-					ea <- evalE wm a
-					eb <- evalE wm b
-					return $ case op of
-						Plus -> padd ea eb
-						Minus -> psub ea eb
-						Mul -> pmul ea eb
-						Div -> pdiv ea eb
-				Exp e -> liftM pexp $ evalE wm e
-			modify' $ Map.insert e pt
-			return pt
-		Just pt -> return pt
-
-integration :: EE -> (Map.Map Index PolyT, PolyT)
-integration (EE f partials) = (Map.map fst possAccs, eval f)
+integration :: (Index -> Double) -> (Int -> UV.Vector Double) -> EE -> (Map.Map Index PolyT, PolyT)
+integration initValue input (EE f partials) = (poss, eval f)
 	where
-		
-		possAccs = Map.mapWithKey build partials
-		build i e = (x,(v,a))
-			where
-				a = pscale (-1) $ eval e
-				v = pintegr 0 a
-				x = pintegr (initValue i) v
-		vels = Map.map (pintegr 0) accs
-		accs = Map.map (pscale (-1) . eval) partials
-		eval (Const c) = let zs = S 0 zs in S c zs
-		eval (Weight i) = fst $ Map.findWithDefault (error $ "no position for "++show i++"???") i possAccs
+		poss = Map.mapWithKey (\index -> pintegr $ C $ initValue index) vels
+		vels = Map.map (pintegr $ C 0) accs
+		accs = Map.map (pscale (C $ -1) . eval) partials
+		eval (Const c) = let zs = S (C 0) zs in S (C c) zs
+		eval (Input i) = let zs = S (C 0) zs in S (V $ input i) zs
+		eval (Weight i) = Map.findWithDefault (error $ "no position for "++show i++"???") i poss
 		eval (Bin op a b) = case op of
 			Plus -> padd ap bp
 			Minus -> psub ap bp
@@ -242,13 +216,8 @@ integration (EE f partials) = (Map.map fst possAccs, eval f)
 			where
 				ap = eval a
 				bp = eval b
+		eval (Sum e) = let ee = eval e in fmap cvSum ee
 		eval (Exp e) = pexp $ eval e
+		cvSum (C x) = C x
+		cvSum (V y) = C $ UV.sum y
 
-find = do
-	e <- readTrains 400
-	let	(tweights, goal) = integration e
-	putStrLn $ "first coefs from goal: "++show (take 5 $ sToList goal)
-
-t = find
-
-main = find
