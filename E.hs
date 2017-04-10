@@ -116,6 +116,9 @@ softMax xs = map (\x -> exp x/denom) xs
 	where
 		denom = sum $ map exp xs
 
+softSat :: Floating e => e -> e
+softSat x = let ex = exp x in ex / (1+ex)
+
 -- |The output is infinitely long.
 layer :: Bool -> Int -> [EE] -> [EE]
 layer addFree ln inputs = outs
@@ -127,7 +130,7 @@ layer addFree ln inputs = outs
 
 -- |Complete network activation.
 nnet :: Bool -> Int -> [Int] -> [EE]
-nnet addFree inputs sizes = map sumEE $ softMax $ f 1 eeinputs sizes
+nnet addFree inputs sizes = map sumEE $ map softSat $ f 1 eeinputs sizes
 	where
 		eeinputs = map inputEE [0..inputs-1]
 		f ln top [] = top
