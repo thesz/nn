@@ -202,6 +202,11 @@ pexp u@(S u0 _) = w
 		svExp (V v) = V $ UV.map exp' v
 		w = pintegr (svExp u0) (pmul (pdiff u) w)
 
+type CM a = State (Map.Map E PolyT)
+
+construct :: Map.Map Index Double -> Map.Map Int (UV.Vector Double) -> EE -> (PolyT, Map.Map Index PolyT)
+construct initials inputsArrays (EE e partials) = undefined
+
 integration :: (Index -> Double) -> (Int -> UV.Vector Double) -> EE -> (Map.Map Index PolyT, PolyT)
 integration initValue input (EE f partials) = (poss, eval f)
 	where
