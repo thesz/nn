@@ -205,7 +205,9 @@ pexp u@(S u0 _) = w
 
 type CM a = State (Map.Map E PolyT)
 
-construct :: Map.Map Index Double -> V.Vector (UV.Vector Double) -> V.Vector (UV.Vector Double) -> V.Vector EE -> (PolyT, Map.Map Index PolyT)
+type NNData = V.Vector (UV.Vector Double)
+
+construct :: Map.Map Index Double -> NNData -> NNData -> V.Vector EE -> (PolyT, Map.Map Index PolyT)
 construct initials inputsArrays outputsAraays outputsExprs = undefined
 	where
 		(minFunc, allExpressions) = flip runState undefined $ do
