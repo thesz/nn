@@ -131,7 +131,7 @@ layer addFree ln inputs = outs
 
 -- |Complete network activation.
 nnet :: Bool -> Int -> [Int] -> [EE]
-nnet addFree inputs sizes = map sumEE $ map softSat $ f 1 eeinputs sizes
+nnet addFree inputs sizes = map softSat $ f 1 eeinputs sizes
 	where
 		eeinputs = map inputEE [0..inputs-1]
 		f ln top [] = top
@@ -207,6 +207,9 @@ type CM a = State (Map.Map E PolyT)
 
 construct :: Map.Map Index Double -> V.Vector (UV.Vector Double) -> V.Vector (UV.Vector Double) -> V.Vector EE -> (PolyT, Map.Map Index PolyT)
 construct initials inputsArrays outputsAraays outputsExprs = undefined
+	where
+		(minFunc, allExpressions) = flip runState undefined $ do
+			undefined
 
 integration :: (Index -> Double) -> (Int -> UV.Vector Double) -> EE -> (Map.Map Index PolyT, PolyT)
 integration initValue input (EE f partials) = (poss, eval f)
