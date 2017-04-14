@@ -16,8 +16,8 @@ import E
 
 import Text.Show.Pretty
 
-perceptronNN :: [EE]
-perceptronNN = nnet True 2 [2]
+perceptronNN :: V.Vector EE
+perceptronNN = nnet True 2 [1]
 
 f :: Double -> Double -> Bool
 f x y = y - 0.3 - x/2 > 0
@@ -40,5 +40,11 @@ perceptronInputsOutputs n = (V.fromList [mkInput fst, mkInput snd], V.fromList [
 		inputsList = take n points
 		outputsList = map (fromIntegral . fromEnum . uncurry f) inputsList
 
-trainPerceptron :: Int -> Map.Map Index Double
-trainPerceptron n = undefined
+--trainPerceptron :: Int -> Map.Map Index Double
+trainPerceptron n = minF
+	where
+		initial = Map.map (const 0) $ nnIndices perceptronNN
+		(ins, outs) = perceptronInputsOutputs n
+		(minF, weights) = construct initial ins outs perceptronNN
+
+t = trainPerceptron 100
