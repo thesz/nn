@@ -40,11 +40,15 @@ perceptronInputsOutputs n = (V.fromList [mkInput fst, mkInput snd], V.fromList [
 		inputsList = take n points
 		outputsList = map (fromIntegral . fromEnum . uncurry f) inputsList
 
+perceptronInitialWeights :: Map.Map Index Double
+perceptronInitialWeights = Map.map (const 0) $ nnIndices perceptronNN
+
 --trainPerceptron :: Int -> Map.Map Index Double
-trainPerceptron n = minF
+trainPerceptron n = (logs, minF)
 	where
-		initial = Map.map (const 0) $ nnIndices perceptronNN
+		initial = perceptronInitialWeights
 		(ins, outs) = perceptronInputsOutputs n
-		(minF, weights) = construct initial ins outs perceptronNN
+		(logs, minF, weights) = construct initial ins outs perceptronNN
 
 t = trainPerceptron 100
+u x y = nnEval perceptronInitialWeights (UV.fromList [x,y]) perceptronNN

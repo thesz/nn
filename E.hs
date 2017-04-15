@@ -14,6 +14,8 @@ import qualified Data.Map as Map
 import qualified Data.Vector as V
 import qualified Data.Vector.Unboxed as UV
 
+import Text.Show.Pretty
+
 import System.IO
 
 type Index = [Int]
@@ -43,9 +45,9 @@ instance Num E where
 	Const (C 1.0) * b = b
 	Const (C 0.0) * b = Const (C 0.0)
 	a * Const (C 1.0) = a
-	a * Const (C 0.0) = Const (C 0.0)
+	a * Const (C 0.0) = Const $ C 0.0
 	a * b = Bin Mul a b
-	fromInteger = Const . C . fromInteger
+	fromInteger = Const . C .  fromInteger
 	abs = error "no abs for E"
 	signum = error "no signum for E"
 
@@ -224,46 +226,47 @@ type CM a = State (Map.Map E PolyT)
 
 type NNData = V.Vector (UV.Vector Double)
 
-construct :: Map.Map Index Double -> NNData -> NNData -> NNet -> (PolyT, Map.Map Index PolyT)
-construct initials inputsArrays outputsArrays outputsExprs = (minFunc, weightsIntegr)
+construct :: Map.Map Index Double -> NNData -> NNData -> NNet -> ([String], PolyT, Map.Map Index PolyT)
+construct initials inputsArrays outputsArrays outputsExprs = (logs, minFunc, weightsIntegr)
 	where
 		nSamples = UV.length $ inputsArrays V.! 0
-		scaleMul = constEEd $ 1/fromIntegral nSamples
-		EE goal partials = (*scaleMul) $ sumEE $ V.foldl (+) 0 $ V.zipWith (\out nnoutEE -> let x = constEEv out + nnoutEE in x*x) outputsArrays outputsExprs
-		((minFunc, weightsDerivs), allExpressionsAssigned) = flip runState Map.empty $ do
-			mf <- liftM (either pconst id) $ findAdd goal
-			weightsDerivs <- flip traverse partials $ \e -> liftM (either pconst id) $ findAdd e
-			return (mf, weightsDerivs)
+		scaleMul = constEEd $ 1/(fromIntegral nSamples * fromIntegral (V.length outputsExprs))
+		EE goal partials = (*scaleMul) $ sumEE $ V.foldl (+) 0 $ V.zipWith (\out nnoutEE -> let x = constEEv out - nnoutEE in x*x) outputsArrays outputsExprs
+		((logs,minFunc, weightsDerivs), allExpressionsAssigned) = flip runState Map.empty $ do
+			(lmf,mf) <- liftM (\(l,v) -> (l, either pconst id v)) $ findAdd goal
+			logsWeightsDerivs <- flip traverse partials $ \e -> liftM (\(l,v) -> (l,either pconst id v)) $ findAdd e
+			return (lmf++concatMap fst (Map.elems logsWeightsDerivs), mf, Map.map snd logsWeightsDerivs)
 		weightsIntegr = Map.intersectionWith (\init weightDeriv -> pintegr (C init) $ pintegr (C 0) $ pscale (C (-1)) weightDeriv)
 			initials weightsDerivs
-		findAdd :: E -> State (Map.Map E (Either CV PolyT)) (Either CV PolyT)
+		findAdd :: E -> State (Map.Map E (Either CV PolyT)) ([String], Either CV PolyT)
 		findAdd e = do
 			mbV <- liftM (Map.lookup e) get
 			case mbV of
-				Just v -> return v
+				Just v -> return ([],v)
 				Nothing -> do
-					v <- case e of
-						Const cv -> return $ Left cv
-						Input i -> return $ Left . V $ inputsArrays V.! i
+					(l,v) <- case e of
+						Const cv -> return ([], Left cv)
+						Input i -> return ([],Left . V $ inputsArrays V.! i)
 						Weight i -> do
 							let	w = Map.findWithDefault (error $ "unable to find weight "++show i) i weightsIntegr
-							return $ Right w
+							return ([], Right w)
 						Bin op a b -> do
-							va <- findAdd a
-							vb <- findAdd b
-							return $ bin op va vb
+							(la,va) <- findAdd a
+							(lb, vb) <- findAdd b
+							return (lb++la,bin op va vb)
 						Exp a -> do
-							v <- findAdd a
-							return $ either (Left . cvExp) (Right . pexp) v
+							(l,v) <- findAdd a
+							return (l,either (Left . cvExp) (Right . pexp) v)
 						Sum e -> do
-							v <- findAdd e
+							(l,v) <- findAdd e
 							let	f (C x) = C x
 								f (V y) = C $ UV.foldl' (+) 0 y
-							return $ either (Left . f) (Right . fmap f) v
+							return (l,either (Left . f) (Right . fmap f) v)
 					modify' $ Map.insert e v
-					return v
+					let	resV = either (\c -> "constant "++show c) (\s -> "poly with head "++show (take 1 (sToList s))) v
+					return (l++["translating\n"++ppShow e, "result "++resV],v)
 		add0 c (S b sb) = S (cvAdd b c) sb
-		sub0 c (S b sb) = S (cvSub c b) sb
+		sub0 c (S b sb) = S (cvSub c b) (pscale (C (-1)) sb)
 		bin Plus  (Left a)  (Left b)  = Left  $ cvAdd a b
 		bin Plus  (Left a)  (Right b) = Right $ add0 a b
 		bin Plus  (Right a) (Left b)  = Right $ add0 b a
@@ -295,5 +298,20 @@ eeIndices (EE e _) = f e
 nnIndices :: V.Vector EE -> Map.Map Index ()
 nnIndices = V.foldr Map.union Map.empty . V.map eeIndices
 
-nnEval :: Map.Map Index Double -> UV.Vector Double -> NNet -> UV.Vector Double
-nnEval weights inputs nn = undefined
+nnEval :: Map.Map Index Double -> UV.Vector Double -> NNet -> V.Vector CV
+nnEval weights inputs nn = V.map eval nn
+	where
+		eval (EE e _) = f e
+		f (Const c) = c
+		f (Input i) = C $ inputs UV.! i
+		f (Weight i) = C $ Map.findWithDefault (error $ "weight "++show i++" w/o default") i weights
+		f (Bin op a b) = case op of
+			Plus -> cvAdd ea eb
+			Minus -> cvSub ea eb
+			Mul -> cvMul ea eb
+			Div -> cvDiv ea eb
+			where
+				ea = f a
+				eb = f b
+		f (Exp x) = cvExp $ f x
+		f (Sum e) = error "there should not be sum!"
