@@ -35,7 +35,7 @@ readInouts' fn nlines = do
 		outs = map (flag . last) ils
 		ins = map (map (\i -> fromIntegral i / 100) . init) ils
 		toNNData = V.fromList . (map UV.fromList) . transpose
-	forM_ (zip ins outs) $ \(i,o) -> putStrLn $ "   "++show i++" -> "++show o
+--	forM_ (zip ins outs) $ \(i,o) -> putStrLn $ "   "++show i++" -> "++show o
 	return (toNNData ins, toNNData outs)
 
 readInouts :: Int -> IO (NNData, NNData)
@@ -74,7 +74,7 @@ testNN nnName nn weights = do
 trainPenDigits :: String -> NNet -> NNData -> NNData -> IO ()
 trainPenDigits nnName nn inputs outputs = do
 	putStrLn $ "Training "++nnName
-	loop 40 1e20 (Map.map (const 0) $ nnIndices nn)
+	loop 40 1e20 $ initialWeights
 	where
 		dumpWeights msg weights = do
 			putStrLn $ "Stopped due to "++msg
@@ -106,7 +106,7 @@ trainPenDigits nnName nn inputs outputs = do
 				delta = abs (prevMinF - currMinF)
 
 		initialWeights :: Map.Map Index Double
-		initialWeights = Map.map (const 0) $ nnIndices nn
+		initialWeights = Map.mapWithKey (\k _ -> (fromIntegral $ sum k)/1000) $ nnIndices nn
 
 simplePenDigsNN :: NNet
 simplePenDigsNN = nnet True 16 [10]
@@ -119,6 +119,6 @@ testPenDigits name nn n = do
 	trainPenDigits name nn ins outs
 
 t = --testPenDigits "simple one fully connected layer NN" simplePenDigsNN 0
-	testPenDigits "two layer NN" twoLayerPenDigsNN 200
+	testPenDigits "two layer NN" twoLayerPenDigsNN 2000
 
 main = t
