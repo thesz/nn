@@ -315,3 +315,6 @@ nnEval weights inputs nn = V.map eval nn
 				eb = f b
 		f (Exp x) = cvExp $ f x
 		f (Sum e) = error "there should not be sum!"
+
+fromC :: CV -> Double
+fromC (C x) = x
