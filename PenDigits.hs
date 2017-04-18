@@ -49,10 +49,10 @@ testNN nnName nn weights = do
 	(testIns, testOuts) <- readTestInouts
 	let	insToTest = map UV.fromList $ transpose $ map UV.toList $ V.toList testIns
 		outsToCheck = map UV.fromList $ map (\xs -> map (fromEnum . (==maximum xs)) xs) $
-				transpose $ map UV.toList $ V.toList testIns
+				transpose $ map UV.toList $ V.toList testOuts
 		zeroes = UV.fromList (replicate 10 0 :: [Int])
 		list = zip insToTest outsToCheck
---	forM_ list $ \(i,o) -> putStrLn $ "    "++show i++" -> "++show o
+	--forM_ list $ \(i,o) -> putStrLn $ "    "++show i++" -> "++show o
 	loop zeroes zeroes list
 	where
 		loop :: UV.Vector Int -> UV.Vector Int -> [(UV.Vector Double, UV.Vector Int)] -> IO ()
@@ -74,27 +74,31 @@ testNN nnName nn weights = do
 trainPenDigits :: String -> NNet -> NNData -> NNData -> IO ()
 trainPenDigits nnName nn inputs outputs = do
 	putStrLn $ "Training "++nnName
-	loop 40 1e20 $ initialWeights
+	loop 40 $ initialWeights
 	where
 		dumpWeights msg weights = do
 			putStrLn $ "Stopped due to "++msg
 			putStrLn $ "weights computed: "++show (Map.toList weights)
 			testNN nnName nn weights
-		loop 0 _ weights = dumpWeights "zero loop counter" weights
-		loop n prevMinF currWeights = do
+		loop 0 weights = dumpWeights "zero loop counter" weights
+		loop n currWeights = do
 			putStrLn $ "  previous min func value: "++show prevMinF
 			putStrLn $ "   current min func value: "++show currMinF
 			putStrLn $ "current poly for min func: "++show (take takeN $ sToList minF)
+			putStrLn $ "          current min t^2: "++show t2
 			putStrLn $ "            current min t: "++show t
 			putStrLn $ "            current delta: "++show delta
-			if delta > min prevMinF currMinF * 0.01
-				then loop (n-1) currMinF weights'
+			putStrLn $ "       symb deriv [1,0,0]: "++show (Map.findWithDefault (error "!!!!!") [1,0,0] partials)
+			putStrLn $ "            deriv [1,0,0]: "++show (take takeN $ sToList $ Map.findWithDefault (error "!!!!!") [1,0,0] weights)
+			if delta > min prevMinF currMinF * 0.01 || t2 <= 0
+				then loop (n-1) weights'
 				else dumpWeights "convergence" currWeights
 			where
-				(logs, minF, weights) = construct currWeights inputs outputs nn
+				(minF, weights, partials) = construct currWeights inputs outputs nn
 				(C c:_:C b:_:C a:_) = sToList minF
+				prevMinF = c
 				t2 = negate b / (2*a)
-				t = sqrt t2
+				t = sqrt t2 * 0.9
 				evalAtT s = sum ms
 					where
 						ts = take takeN $ iterate (*t) 1
@@ -106,7 +110,7 @@ trainPenDigits nnName nn inputs outputs = do
 				delta = abs (prevMinF - currMinF)
 
 		initialWeights :: Map.Map Index Double
-		initialWeights = Map.mapWithKey (\k _ -> (fromIntegral $ sum k)/1000) $ nnIndices nn
+		initialWeights = Map.mapWithKey (\k _ -> 0*(fromIntegral $ sum k)/1000) $ nnIndices nn
 
 simplePenDigsNN :: NNet
 simplePenDigsNN = nnet True 16 [10]
@@ -118,7 +122,8 @@ testPenDigits name nn n = do
 	(ins, outs) <- readInouts n
 	trainPenDigits name nn ins outs
 
-t = --testPenDigits "simple one fully connected layer NN" simplePenDigsNN 0
+t =
+	--testPenDigits "simple one fully connected layer NN" simplePenDigsNN 0
 	testPenDigits "two layer NN" twoLayerPenDigsNN 2000
 
 main = t

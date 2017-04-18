@@ -226,8 +226,8 @@ type CM a = State (Map.Map E PolyT)
 
 type NNData = V.Vector (UV.Vector Double)
 
-construct :: Map.Map Index Double -> NNData -> NNData -> NNet -> ([String], PolyT, Map.Map Index PolyT)
-construct initials inputsArrays outputsArrays outputsExprs = (logs, minFunc, weightsIntegr)
+construct :: Map.Map Index Double -> NNData -> NNData -> NNet -> (PolyT, Map.Map Index PolyT, Map.Map Index E)
+construct initials inputsArrays outputsArrays outputsExprs = (minFunc, weightsIntegr, partials)
 	where
 		nSamples = UV.length $ inputsArrays V.! 0
 		scaleMul = constEEd $ 1/(fromIntegral nSamples * fromIntegral (V.length outputsExprs))
