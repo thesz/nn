@@ -46,8 +46,12 @@ instance Num E where
 	Const (C 0.0) * b = Const (C 0.0)
 	a * Const (C 1.0) = a
 	a * Const (C 0.0) = Const $ C 0.0
+	Const c1 * Const c2 = Const $ cvMul c1 c2
+	Const c1 * Bin Mul (Const c2) e = Const (cvMul c1 c2) * e
+	Const c1 * Bin Mul e (Const c2) = Const (cvMul c1 c2) * e
 	a * b = Bin Mul a b
 	fromInteger = Const . C .  fromInteger
+	negate =((Const $ C (-1))*)
 	abs = error "no abs for E"
 	signum = error "no signum for E"
 
@@ -88,7 +92,7 @@ instance Num EE where
 instance Fractional EE where
 	fromRational x = EE (fromRational x) Map.empty
 	EE a da / EE b db = EE (a/b) (Map.mergeWithKey (\_ da db -> Just $ da / b - db * a / (b*b))
-		(Map.map (\da -> da / b)) (Map.map (\db -> db * a /(b*b))) da db)
+		(Map.map (\da -> da / b)) (Map.map (\db -> negate $ db * a /(b*b))) da db)
 
 instance Floating EE where
 	pi = EE pi Map.empty
@@ -123,29 +127,41 @@ weight index = EE (Weight index) (Map.singleton index 1)
 softMax :: Floating e => [e] -> [e]
 softMax xs = map (\x -> exp x/denom) xs
 	where
-		denom = sum $ map exp xs
+		denom = hierSum $ map exp xs
 
 softSat :: Floating e => e -> e
 softSat x = let ex = exp x in ex / (1+ex)
 
+softSats, softSigns :: Floating e => [e] -> [e]
+softSats = map softSat
+
+softSign :: Floating e => e -> e
+softSign e = (1-e2e)/(1+e2e)
+	where
+		e2e = exp $ (-2)*e
+
+softSigns = map softSign
+
 -- |The output is infinitely long.
-layer :: Bool -> Int -> [EE] -> [EE]
-layer addFree ln inputs = outs
+layer :: ([EE] -> [EE]) -> Bool -> Int -> [EE] -> [EE]
+layer f addFree ln inputs = f outs
 	where
 		add is
 			| addFree = 1 : is
 			| otherwise = is
-		outs = [ o | j <- [0..], let o = sum [ e*weight [ln, i, j] | (i,e) <- zip [0..] $ add inputs]]
+		outs = [ o | j <- [0..], let o = hierSum [ e*weight [ln, i, j] | (i,e) <- zip [0..] $ add inputs]]
 
 type NNet = V.Vector EE
 
 -- |Complete network activation.
 nnet :: Bool -> Int -> [Int] -> NNet
-nnet addFree inputs sizes = V.fromList $ map softSat $ f 1 eeinputs sizes
+nnet addFree inputs sizes = V.fromList $ f 1 eeinputs sizes
 	where
 		eeinputs = map inputEE [0..inputs-1]
 		f ln top [] = top
-		f ln top (n : ns) = f (ln+1) (take n $ layer addFree ln top) ns
+		f ln top (n : ns)
+			| null ns = f (ln+1) (take n $ layer softSigns addFree ln top) ns
+			| otherwise = f (ln+1) (take n $ layer softSigns addFree ln top) ns
 
 data S a = S !a (S a)
 
@@ -165,6 +181,9 @@ type PolyT = S CV
 
 pintegr :: CV -> PolyT -> PolyT
 pintegr f0 ft = S f0 $ sZipWith cvDiv ft (sFrom 1)
+
+pderiv :: PolyT -> PolyT
+pderiv (S _ ft) = sZipWith cvMul ft (sFrom 1)
 
 cvDiv, cvMul, cvAdd, cvSub :: CV -> CV -> CV
 cvDiv (C a) (C b) = C $ a / b
@@ -226,18 +245,28 @@ type CM a = State (Map.Map E PolyT)
 
 type NNData = V.Vector (UV.Vector Double)
 
-construct :: Map.Map Index Double -> NNData -> NNData -> NNet -> (PolyT, Map.Map Index PolyT, Map.Map Index E)
-construct initials inputsArrays outputsArrays outputsExprs = (minFunc, weightsIntegr, partials)
+hierSum :: Num a => [a] -> a
+hierSum [] = 0
+hierSum [a] = a
+hierSum xs = hierSum $ red xs
+	where
+		red (a:b:abs) = (a+b) : red abs
+		red abs = abs
+
+construct :: Map.Map Index Double -> Map.Map Index Double -> NNData -> NNData -> NNData -> NNet
+	  -> (PolyT, Map.Map Index PolyT, Map.Map Index PolyT, Map.Map Index E)
+construct initials velocities inputsArrays outputsArrays correctiveWeights outputsExprs = (minFunc, weightsIntegr, weightsVelocities, partials)
 	where
 		nSamples = UV.length $ inputsArrays V.! 0
-		scaleMul = constEEd $ 1/(fromIntegral nSamples * fromIntegral (V.length outputsExprs))
-		EE goal partials = (*scaleMul) $ sumEE $ V.foldl (+) 0 $ V.zipWith (\out nnoutEE -> let x = constEEv out - nnoutEE in x*x) outputsArrays outputsExprs
+		scaleMul = --1.0 
+			constEEd $ 1/(fromIntegral nSamples)
+		EE goal partials = (*scaleMul) $ sumEE $ hierSum $ V.toList $ V.zipWith (*) (V.map constEEv correctiveWeights) $ V.zipWith (\out nnoutEE -> let x = constEEv out - nnoutEE in x*x) outputsArrays outputsExprs
 		((logs,minFunc, weightsDerivs), allExpressionsAssigned) = flip runState Map.empty $ do
 			(lmf,mf) <- liftM (\(l,v) -> (l, either pconst id v)) $ findAdd goal
 			logsWeightsDerivs <- flip traverse partials $ \e -> liftM (\(l,v) -> (l,either pconst id v)) $ findAdd e
 			return (lmf++concatMap fst (Map.elems logsWeightsDerivs), mf, Map.map snd logsWeightsDerivs)
-		weightsIntegr = Map.intersectionWith (\init weightDeriv -> pintegr (C init) $ pintegr (C 0) $ pscale (C (-1)) weightDeriv)
-			initials weightsDerivs
+		weightsVelocities = Map.intersectionWith (\v w -> pintegr (C v) $ pscale (C (-1)) w) velocities weightsDerivs
+		weightsIntegr = Map.intersectionWith (\init v -> pintegr (C init) v) initials weightsVelocities
 		findAdd :: E -> State (Map.Map E (Either CV PolyT)) ([String], Either CV PolyT)
 		findAdd e = do
 			mbV <- liftM (Map.lookup e) get
@@ -316,5 +345,32 @@ nnEval weights inputs nn = V.map eval nn
 		f (Exp x) = cvExp $ f x
 		f (Sum e) = error "there should not be sum!"
 
+nnEvalVec :: Map.Map Index Double -> NNData -> NNet -> NNData
+nnEvalVec weights inputs nn = V.map (check . eval) nn
+	where
+		check (C _) = error "get scalar in the nnEvalVec"
+		check (V v) = v
+		eval (EE e _) = f e
+		f (Const c) = c
+		f (Input i) = V $ inputs V.! i
+		f (Weight i) = C $ Map.findWithDefault (error $ "weight "++show i++" w/o default") i weights
+		f (Bin op a b) = case op of
+			Plus -> cvAdd ea eb
+			Minus -> cvSub ea eb
+			Mul -> cvMul ea eb
+			Div -> cvDiv ea eb
+			where
+				ea = f a
+				eb = f b
+		f (Exp x) = cvExp $ f x
+		f (Sum e) = error "there should not be sum!"
+
 fromC :: CV -> Double
 fromC (C x) = x
+
+findMinT :: S CV -> Double
+findMinT s = undefined
+	where
+		l = sToList s
+		n = 9
+		
