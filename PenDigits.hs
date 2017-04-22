@@ -76,9 +76,10 @@ testNN nnName nn weights = do
 				rights' = UV.zipWith (+) countsRight $ UV.zipWith (*) outs output
 			loop (UV.zipWith (+) sums (UV.zipWith (*) uouts $ UV.map fromIntegral output)) counts' rights' ios
 
-computeCorrWeights :: NNData -> NNData -> NNet -> NNData
-computeCorrWeights inputs expectedOutputs nn = undefined
+computeCorrectiveWeights :: Map.Map Index Double -> NNData -> NNData -> NNet -> NNData
+computeCorrectiveWeights weights inputs expectedOutputs nn = undefined
 	where
+		realOutputs = nnEvalVec weights inputs nn
 		
 
 trainPenDigits :: String -> NNet -> NNData -> NNData -> IO ()
