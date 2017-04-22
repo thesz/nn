@@ -77,10 +77,25 @@ testNN nnName nn weights = do
 			loop (UV.zipWith (+) sums (UV.zipWith (*) uouts $ UV.map fromIntegral output)) counts' rights' ios
 
 computeCorrectiveWeights :: Map.Map Index Double -> NNData -> NNData -> NNet -> NNData
-computeCorrectiveWeights weights inputs expectedOutputs nn = undefined
+computeCorrectiveWeights weights inputs expectedOutputs nn = corrWeights
 	where
+		realOutputs :: V.Vector (UV.Vector Double)
 		realOutputs = nnEvalVec weights inputs nn
-		
+		veryNegativeNumber = -1e30
+		-- expectedOutputs are either 0 or 1.
+		-- here we compute values for expected class.
+		valuesForExpected :: UV.Vector Double
+		valuesForExpected = V.foldl1 max $ V.zipWith (UV.zipWith (\real exp -> if exp > 0 then real else veryNegativeNumber)) realOutputs expectedOutputs
+		interestingCounts = V.foldl1 (UV.zipWith (+)) $ V.map (UV.zipWith (\exp out -> fromEnum $ out >= exp) valuesForExpected) realOutputs
+		nOuts = V.length realOutputs
+		-- count must be at least 1 - a correct classification occurred.
+		computeWeight count expVal out
+			| out >= expVal = w1
+			| otherwise = w0
+			where
+				w0 = 1 / fromIntegral (nOuts - count + nOuts*count)
+				w1 = fromIntegral nOuts * w0
+		corrWeights = V.map (UV.zipWith3 computeWeight interestingCounts valuesForExpected) realOutputs
 
 trainPenDigits :: String -> NNet -> NNData -> NNData -> IO ()
 trainPenDigits nnName nn inputs outputs = do
