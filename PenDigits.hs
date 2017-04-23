@@ -86,15 +86,19 @@ computeCorrectiveWeights weights inputs expectedOutputs nn = corrWeights
 		-- here we compute values for expected class.
 		valuesForExpected :: UV.Vector Double
 		valuesForExpected = V.foldl1 max $ V.zipWith (UV.zipWith (\real exp -> if exp > 0 then real else veryNegativeNumber)) realOutputs expectedOutputs
-		interestingCounts = V.foldl1 (UV.zipWith (+)) $ V.map (UV.zipWith (\exp out -> fromEnum $ out >= exp) valuesForExpected) realOutputs
+		interestingCounts = V.foldl1 (UV.zipWith (+)) $ V.map (UV.zipWith (\exp out -> fromEnum $ out == exp) valuesForExpected) realOutputs
 		nOuts = V.length realOutputs
 		-- count must be at least 1 - a correct classification occurred.
-		computeWeight count expVal out
+		computeWeight count' expVal out
+			| out == expVal = p+w1
 			| out >= expVal = w1
 			| otherwise = w0
 			where
-				w0 = 1 / fromIntegral (nOuts - count + nOuts*count)
-				w1 = fromIntegral nOuts * w0
+				count = --1
+					count'
+				p = 0.3
+				w0 = (1-p) / fromIntegral (nOuts - count + nOuts*count)
+				w1 = fromIntegral (nOuts -count) * w0
 		corrWeights = V.map (UV.zipWith3 computeWeight interestingCounts valuesForExpected) realOutputs
 
 trainPenDigits :: String -> NNet -> NNData -> NNData -> IO ()
@@ -150,11 +154,13 @@ trainPenDigits nnName nn inputs outputs = do
 					Map.map (const 0) vels
 				currMinF = evalAtT minF
 				delta = abs (prevMinF - currMinF)
+				correctiveWeights =
+					V.map (UV.map selectCW) outputs
+					--computeCorrectiveWeights currWeights inputs outputs nn
 
 		alpha = 1/19
 		beta = 10*alpha
 		selectCW w = if w > 0 then beta else alpha
-		correctiveWeights = V.map (UV.map selectCW) outputs
 
 		initialWeights :: Map.Map Index Double
 		initialWeights = Map.mapWithKey (\k _ -> (if odd (sum k) then negate else id) $ fromIntegral (sum k)/1000) $ nnIndices nn
@@ -171,7 +177,7 @@ testPenDigits name nn n = do
 
 t =
 	--testPenDigits "simple one fully connected layer NN" simplePenDigsNN 0
-	testPenDigits "two layer NN" twoLayerPenDigsNN 4000
+	testPenDigits "two layer NN" twoLayerPenDigsNN 500
 
 main = do
 	hSetBuffering stdout NoBuffering
