@@ -186,21 +186,30 @@ pderiv :: PolyT -> PolyT
 pderiv (S _ ft) = sZipWith cvMul ft (sFrom 1)
 
 cvDiv, cvMul, cvAdd, cvSub :: CV -> CV -> CV
+cvDiv (C 0) _ = C 0
+cvDiv a (C 1) = a
 cvDiv (C a) (C b) = C $ a / b
 cvDiv (C a) (V b) = V $ UV.map (a/) b
 cvDiv (V a) (C b) = V $ UV.map (/b) a
 cvDiv (V a) (V b) = V $ UV.zipWith (/) a b
 
+cvMul (C 0) _ = C 0
+cvMul _ (C 0) = C 0
+cvMul (C 1) b = b
+cvMul a (C 1) = a
 cvMul (C a) (C b) = C $ a * b
 cvMul (C a) (V b) = V $ UV.map (a*) b
 cvMul (V a) (C b) = V $ UV.map (*b) a
 cvMul (V a) (V b) = V $ UV.zipWith (*) a b
 
+cvAdd (C 0) b = b
+cvAdd a (C 0) = a
 cvAdd (C a) (C b) = C $ a + b
 cvAdd (C a) (V b) = V $ UV.map (a+) b
 cvAdd (V a) (C b) = V $ UV.map (+b) a
 cvAdd (V a) (V b) = V $ UV.zipWith (+) a b
 
+cvSub a (C 0) = a
 cvSub (C a) (C b) = C $ a - b
 cvSub (C a) (V b) = V $ UV.map (a-) b
 cvSub (V a) (C b) = V $ UV.map (\a -> a-b) a
