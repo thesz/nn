@@ -128,13 +128,15 @@ trainPenDigits nnName nn inputs outputs = do
 				else dumpWeights True "convergence" currWeights
 			where
 				(minF, weights, vels, partials) = construct currWeights currVels inputs outputs correctiveWeights nn
+				maxF = 4.0
 				S (C prevMinF) _ = minF
 				computeMinT forMin s
 					| abs c > th = if a == 0 then 0.01 else sqrt (abs c / abs a)
 					| otherwise  = if a == 0 then 0.01 else sqrt (   th / abs a)
 					where
 						th = 0.001
-						(C c:C b:C a:_) = sToList s
+						(C c':C b:C a:_) = sToList s
+						c = signum c' * max 0.01 (abs c')
 						smallStep = case (a < 0, b < 0) of
 							(True,True) -> min (abs $ c/b) (sqrt $ abs $ c / a) / 20
 							(False, True) -> if b == 0 then sqrt (c / a) / 5 else negate b / (2*a) / 2
@@ -142,7 +144,7 @@ trainPenDigits nnName nn inputs outputs = do
 							_ -> 0
 				minFMinT = computeMinT True minF
 				weightsStep = Map.foldl' (\t s -> min t $ computeMinT False s) minFMinT weights
-				t = (weightsStep + minFMinT)/2/4
+				t = (sqrt $ weightsStep * minFMinT) * (prevMinF / maxF)
 				evalAtT s = sum ms
 					where
 						ts = take takeN $ iterate (*t) 1
@@ -177,7 +179,7 @@ testPenDigits name nn n = do
 
 t =
 	--testPenDigits "simple one fully connected layer NN" simplePenDigsNN 0
-	testPenDigits "two layer NN" twoLayerPenDigsNN 500
+	testPenDigits "two layer NN" twoLayerPenDigsNN 0
 
 main = do
 	hSetBuffering stdout NoBuffering
