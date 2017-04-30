@@ -144,7 +144,7 @@ trainPenDigits nnName nn inputs outputs = do
 							_ -> 0
 				minFMinT = computeMinT True minF
 				weightsStep = Map.foldl' (\t s -> min t $ computeMinT False s) minFMinT weights
-				t = (sqrt $ weightsStep * minFMinT) * (prevMinF / maxF)
+				t = sqrt $ (weightsStep * minFMinT) * (prevMinF / maxF)
 				evalAtT s = sum ms
 					where
 						ts = take takeN $ iterate (*t) 1
