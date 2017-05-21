@@ -262,9 +262,11 @@ hierSum xs = hierSum $ red xs
 		red (a:b:abs) = (a+b) : red abs
 		red abs = abs
 
-construct :: Map.Map Index Double -> Map.Map Index Double -> NNData -> NNData -> NNData -> NNet
-	  -> (PolyT, Map.Map Index PolyT, Map.Map Index PolyT, Map.Map Index E)
-construct initials velocities inputsArrays outputsArrays correctiveWeights outputsExprs = (minFunc, weightsIntegr, weightsVelocities, partials)
+type Weights = Map.Map Index Double
+
+construct :: Weights -> NNData -> NNData -> NNData -> NNet
+	  -> (PolyT, Map.Map Index PolyT, Map.Map Index E)
+construct initials inputsArrays outputsArrays correctiveWeights outputsExprs = (minFunc, weightsIntegr, partials)
 	where
 		nSamples = UV.length $ inputsArrays V.! 0
 		scaleMul = --1.0 
@@ -274,7 +276,7 @@ construct initials velocities inputsArrays outputsArrays correctiveWeights outpu
 			(lmf,mf) <- liftM (\(l,v) -> (l, either pconst id v)) $ findAdd goal
 			logsWeightsDerivs <- flip traverse partials $ \e -> liftM (\(l,v) -> (l,either pconst id v)) $ findAdd e
 			return (lmf++concatMap fst (Map.elems logsWeightsDerivs), mf, Map.map snd logsWeightsDerivs)
-		weightsVelocities = Map.intersectionWith (\v w -> pintegr (C v) $ pscale (C (-1)) w) velocities weightsDerivs
+		weightsVelocities = Map.map (pintegr (C 0) . pscale (C (-1))) weightsDerivs
 		weightsIntegr = Map.intersectionWith (\init v -> pintegr (C init) v) initials weightsVelocities
 		findAdd :: E -> State (Map.Map E (Either CV PolyT)) ([String], Either CV PolyT)
 		findAdd e = do
@@ -336,7 +338,7 @@ eeIndices (EE e _) = f e
 nnIndices :: V.Vector EE -> Map.Map Index ()
 nnIndices = V.foldr Map.union Map.empty . V.map eeIndices
 
-nnEval :: Map.Map Index Double -> UV.Vector Double -> NNet -> V.Vector CV
+nnEval :: Weights -> UV.Vector Double -> NNet -> V.Vector CV
 nnEval weights inputs nn = V.map eval nn
 	where
 		eval (EE e _) = f e
@@ -354,7 +356,7 @@ nnEval weights inputs nn = V.map eval nn
 		f (Exp x) = cvExp $ f x
 		f (Sum e) = error "there should not be sum!"
 
-nnEvalVec :: Map.Map Index Double -> NNData -> NNet -> NNData
+nnEvalVec :: Weights -> NNData -> NNet -> NNData
 nnEvalVec weights inputs nn = V.map (check . eval) nn
 	where
 		check (C _) = error "get scalar in the nnEvalVec"
@@ -382,4 +384,60 @@ findMinT s = undefined
 	where
 		l = sToList s
 		n = 9
-		
+
+trainLoop :: () -> String -> NNet -> NNData -> NNData -> IO Weights
+trainLoop computeScore nnName nn inputs outputs = do
+	putStrLn $ "Training "++nnName
+	loop True 40000 initialWeights
+	where
+		dumpWeights msg weights = do
+			putStrLn $ "weights computed ("++msg++"): "++show (Map.toList weights)
+			return weights
+		loop first 0 weights = dumpWeights "zero loop counter" weights
+		loop first n currWeights = do
+			putStrLn $ "  previous min func value: "++show prevMinF
+			putStrLn $ "   current min func value: "++show currMinF
+			putStrLn $ "current poly for min func: "++show (take takeN $ sToList minF)
+			putStrLn $ "            current min t: "++show t
+			putStrLn $ "            current delta: "++show delta
+			if max prevMinF currMinF > 0.001 && delta > 0
+				then loop False (n-1) weights'
+				else dumpWeights "convergence" currWeights
+			where
+				(minF, weights, partials) = construct currWeights inputs outputs correctiveWeights nn
+				maxF = 4.0
+				S (C prevMinF) _ = minF
+				computeMinT forMin s
+					| abs c > th = if a == 0 then 0.01 else sqrt (abs c / abs a)
+					| otherwise  = if a == 0 then 0.01 else sqrt (   th / abs a)
+					where
+						th = 0.001
+						(C c':C b:C a:_) = sToList s
+						c = signum c' * max 0.01 (abs c')
+						smallStep = case (a < 0, b < 0) of
+							(True,True) -> min (abs $ c/b) (sqrt $ abs $ c / a) / 20
+							(False, True) -> if b == 0 then sqrt (c / a) / 5 else negate b / (2*a) / 2
+							(True, False) -> if b == 0 then sqrt (negate c / a) / 5 else negate b / (2*a) / 2
+							_ -> 0
+				minFMinT = computeMinT True minF
+				weightsStep = Map.foldl' (\t s -> min t $ computeMinT False s) minFMinT weights
+				t = (sqrt $ weightsStep * minFMinT) / 2 * (prevMinF / maxF)
+				evalAtT s = sum ms
+					where
+						ts = take takeN $ iterate (*t) 1
+						fromS (S (C x) ss) = x : fromS ss
+						ms = zipWith (*) (fromS s) ts
+				takeN = 3
+				weights' = Map.map evalAtT weights
+				currMinF = evalAtT minF
+				delta = abs (prevMinF - currMinF)
+				correctiveWeights =
+					V.map (UV.map selectCW) outputs
+					--computeCorrectiveWeights currWeights inputs outputs nn
+
+		alpha = 1/19
+		beta = 10*alpha
+		selectCW w = if w > 0 then beta else alpha
+
+		initialWeights :: Weights
+		initialWeights = Map.mapWithKey (\k _ -> (if odd (sum k) then negate else id) $ fromIntegral (sum k)/1000) $ nnIndices nn

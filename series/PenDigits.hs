@@ -25,8 +25,8 @@ import Text.Show.Pretty
 
 import E
 
-trainFile = "pendigs/pendigits.tra"
-testFile = "pendigs/pendigits.tes"
+trainFile = "../pendigs/pendigits.tra"
+testFile = "../pendigs/pendigits.tes"
 
 readInouts' :: String -> Int -> IO (NNData, NNData)
 readInouts' fn nlines = do
@@ -45,7 +45,7 @@ readInouts = readInouts' trainFile
 
 readTestInouts = readInouts' testFile 0
 
-testNN :: String -> NNet -> Map.Map Index Double -> IO ()
+testNN :: String -> NNet -> Weights -> IO ()
 testNN nnName nn weights = do
 	putStrLn $ "Testing "++nnName
 	(testIns, testOuts) <- readTestInouts
@@ -103,69 +103,9 @@ computeCorrectiveWeights weights inputs expectedOutputs nn = corrWeights
 
 trainPenDigits :: String -> NNet -> NNData -> NNData -> IO ()
 trainPenDigits nnName nn inputs outputs = do
-	putStrLn $ "Training "++nnName
-	loop True 40000 initialWeights (Map.map (const 0) initialWeights)
-	where
-		dumpWeights stopped msg weights = do
-			if stopped
-				then putStrLn $ "Stopped due to "++msg
-				else putStrLn $ "Testing the weights "++msg
-			putStrLn $ "weights computed: "++show (Map.toList weights)
-			testNN nnName nn weights
-		loop first 0 weights vels = dumpWeights True "zero loop counter" weights
-		loop first n currWeights currVels = do
-			putStrLn $ "  previous min func value: "++show prevMinF
-			putStrLn $ "   current min func value: "++show currMinF
-			putStrLn $ "current poly for min func: "++show (take takeN $ sToList minF)
-			putStrLn $ "            current min t: "++show t
-			putStrLn $ "            current delta: "++show delta
-			--putStrLn $ "       symb deriv [1,0,0]: "++show (Map.findWithDefault (error "!!!!!") [1,0,0] partials)
-			--putStrLn $ "            deriv [1,0,0]: "++show (take takeN $ sToList $ Map.findWithDefault (error "!!!!!") [1,0,0] weights)
-			--dumpWeights False "step start" currWeights
-			dumpWeights False "step result" weights'
-			if max prevMinF currMinF > 0.001 && delta > 0
-				then loop False (n-1) weights' vels'
-				else dumpWeights True "convergence" currWeights
-			where
-				(minF, weights, vels, partials) = construct currWeights currVels inputs outputs correctiveWeights nn
-				maxF = 4.0
-				S (C prevMinF) _ = minF
-				computeMinT forMin s
-					| abs c > th = if a == 0 then 0.01 else sqrt (abs c / abs a)
-					| otherwise  = if a == 0 then 0.01 else sqrt (   th / abs a)
-					where
-						th = 0.001
-						(C c':C b:C a:_) = sToList s
-						c = signum c' * max 0.01 (abs c')
-						smallStep = case (a < 0, b < 0) of
-							(True,True) -> min (abs $ c/b) (sqrt $ abs $ c / a) / 20
-							(False, True) -> if b == 0 then sqrt (c / a) / 5 else negate b / (2*a) / 2
-							(True, False) -> if b == 0 then sqrt (negate c / a) / 5 else negate b / (2*a) / 2
-							_ -> 0
-				minFMinT = computeMinT True minF
-				weightsStep = Map.foldl' (\t s -> min t $ computeMinT False s) minFMinT weights
-				t = (sqrt $ weightsStep * minFMinT) / 2 * (prevMinF / maxF)
-				evalAtT s = sum ms
-					where
-						ts = take takeN $ iterate (*t) 1
-						fromS (S (C x) ss) = x : fromS ss
-						ms = zipWith (*) (fromS s) ts
-				takeN = 3
-				weights' = Map.map evalAtT weights
-				vels' = --Map.map evalAtT vels
-					Map.map (const 0) vels
-				currMinF = evalAtT minF
-				delta = abs (prevMinF - currMinF)
-				correctiveWeights =
-					V.map (UV.map selectCW) outputs
-					--computeCorrectiveWeights currWeights inputs outputs nn
-
-		alpha = 1/19
-		beta = 10*alpha
-		selectCW w = if w > 0 then beta else alpha
-
-		initialWeights :: Map.Map Index Double
-		initialWeights = Map.mapWithKey (\k _ -> (if odd (sum k) then negate else id) $ fromIntegral (sum k)/1000) $ nnIndices nn
+	ws <- trainLoop () nnName nn inputs outputs
+	testNN nnName nn ws
+	return ()
 
 simplePenDigsNN :: NNet
 simplePenDigsNN = nnet True 16 [10]
