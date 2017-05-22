@@ -385,8 +385,8 @@ findMinT s = undefined
 		l = sToList s
 		n = 9
 
-trainLoop :: () -> String -> NNet -> NNData -> NNData -> IO Weights
-trainLoop computeScore nnName nn inputs outputs = do
+trainClassifyLoop :: () -> String -> NNet -> NNData -> NNData -> IO Weights
+trainClassifyLoop computeScore nnName nn inputs outputs = do
 	putStrLn $ "Training "++nnName
 	loop True 40000 initialWeights
 	where
@@ -395,6 +395,7 @@ trainLoop computeScore nnName nn inputs outputs = do
 			return weights
 		loop first 0 weights = dumpWeights "zero loop counter" weights
 		loop first n currWeights = do
+			putStrLn $ "   train error percentage: "++show wrongsPercent
 			putStrLn $ "  previous min func value: "++show prevMinF
 			putStrLn $ "   current min func value: "++show currMinF
 			putStrLn $ "current poly for min func: "++show (take takeN $ sToList minF)
@@ -404,6 +405,17 @@ trainLoop computeScore nnName nn inputs outputs = do
 				then loop False (n-1) weights'
 				else dumpWeights "convergence" currWeights
 			where
+				currentOuts = nnEvalVec currWeights inputs nn
+				mustMaxOuts :: UV.Vector Double
+				mustMaxOuts = fst $ V.foldl1' (\(avs, aw) (bvs, bw) -> if aw > bw then (avs,aw) else (bvs,bw)) $
+					V.zip currentOuts outputs
+				countsAboveMustMax = V.foldl' (\cnts vs -> UV.zipWith (+) cnts $ UV.zipWith (\a b -> if a >= b then 1 else 0) vs mustMaxOuts)
+					(UV.map (const 0) mustMaxOuts) currentOuts
+				wrongs = UV.map (fromIntegral . fromEnum . (>1)) countsAboveMustMax
+				wrongsPercent :: Double
+				wrongsPercent = UV.sum wrongs * 100 / fromIntegral (UV.length wrongs)
+				normMul = fromIntegral (UV.length countsAboveMustMax) / UV.sum countsAboveMustMax
+				correctMuls = UV.map (*normMul) countsAboveMustMax
 				(minF, weights, partials) = construct currWeights inputs outputs correctiveWeights nn
 				maxF = 4.0
 				S (C prevMinF) _ = minF
@@ -432,11 +444,12 @@ trainLoop computeScore nnName nn inputs outputs = do
 				currMinF = evalAtT minF
 				delta = abs (prevMinF - currMinF)
 				correctiveWeights =
-					V.map (UV.map selectCW) outputs
+					V.map (UV.zipWith (*) correctMuls . UV.map selectCW) outputs
 					--computeCorrectiveWeights currWeights inputs outputs nn
 
-		alpha = 1/19
-		beta = 10*alpha
+		outN = fromIntegral $ V.length nn
+		alpha = 1/(2*outN-1)
+		beta = outN*alpha
 		selectCW w = if w > 0 then beta else alpha
 
 		initialWeights :: Weights

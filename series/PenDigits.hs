@@ -103,7 +103,7 @@ computeCorrectiveWeights weights inputs expectedOutputs nn = corrWeights
 
 trainPenDigits :: String -> NNet -> NNData -> NNData -> IO ()
 trainPenDigits nnName nn inputs outputs = do
-	ws <- trainLoop () nnName nn inputs outputs
+	ws <- trainClassifyLoop () nnName nn inputs outputs
 	testNN nnName nn ws
 	return ()
 
