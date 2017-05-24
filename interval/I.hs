@@ -10,7 +10,7 @@ data I a = I !a !a
 	deriving (Eq, Ord, Show)
 
 instance (Ord a, Num a) => Num (I a) where
-	fromInteger a = let x = fromInteger a in I x x
+	fromInteger = singleton . fromInteger
 	I la ha + I lb hb = I (la + lb) (ha + hb)
 	I la ha - I lb hb = I (la - hb) (ha - lb)
 	I la ha * I lb hb
@@ -34,7 +34,7 @@ instance (Ord a, Num a) => Num (I a) where
 	negate (I l h) = I (negate h) (negate l)
 
 instance (Ord a, Fractional a) => Fractional (I a) where
-	fromRational r = let x = fromRational r in I x x
+	fromRational = singleton . fromRational
 	a / b@(I lb hb)
 		| lb <= 0 && hb >= 0 = error $ "range contains zero."
 		| otherwise = a * recip b
@@ -56,3 +56,9 @@ instance (Ord a, Floating a) => Floating (I a) where
 	asinh = error "asinh (I) is undefined"
 	acosh = error "acosh (I) is undefined"
 	atanh = error "atanh (I) is undefined"
+
+range :: Num a => I a -> a
+range (I l h) = h - l
+
+singleton :: a -> I a
+singleton x = I x x
