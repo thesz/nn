@@ -26,12 +26,12 @@ instance (Ord a, Fractional a, Ord b, Fractional b) => Split (I a, I b) where
 
 type Prio i = Map.Map (I Double) (Set.Set i)
 
-astar :: (Ord i, Split i) => Double -> (i -> I Double) -> i -> i
+astar :: (Ord i, Split i) => Double -> (i -> I Double) -> i -> IO i
 astar eps f dom = go prio0
 	where
 		prio0 = Map.singleton (f dom) (Set.singleton dom)
 		go prio
-			| range i < eps = head dsList
+			| range i < eps = return $ head dsList
 			| otherwise = undefined
 			where
 				dsList = Set.toList ds
