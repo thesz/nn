@@ -60,5 +60,9 @@ instance (Ord a, Floating a) => Floating (I a) where
 range :: Num a => I a -> a
 range (I l h) = h - l
 
+high, low :: I a -> a
+high (I _ h) = h
+low (I l _) = l
+
 singleton :: a -> I a
 singleton x = I x x
