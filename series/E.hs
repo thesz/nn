@@ -409,7 +409,7 @@ trainClassifyLoop computeScore nnName nn inputs outputs = do
 				mustMaxOuts :: UV.Vector Double
 				mustMaxOuts = fst $ V.foldl1' (\(avs, aw) (bvs, bw) -> if aw > bw then (avs,aw) else (bvs,bw)) $
 					V.zip currentOuts outputs
-				countsAboveMustMax = V.foldl' (\cnts vs -> UV.zipWith (+) cnts $ UV.zipWith (\a b -> if a >= b then 1 else 0) vs mustMaxOuts)
+				countsAboveMustMax = V.foldl' (\cnts vs -> UV.zipWith (+) (cnts :: UV.Vector Double) $ UV.zipWith (\a b -> if a >= b then 1 else 0) vs mustMaxOuts)
 					(UV.map (const 0) mustMaxOuts) currentOuts
 				wrongs = UV.map (fromIntegral . fromEnum . (>1)) countsAboveMustMax
 				wrongsPercent :: Double
@@ -444,7 +444,8 @@ trainClassifyLoop computeScore nnName nn inputs outputs = do
 				currMinF = evalAtT minF
 				delta = abs (prevMinF - currMinF)
 				correctiveWeights =
-					V.map (UV.zipWith (*) correctMuls . UV.map selectCW) outputs
+					V.map (UV.map selectCW) outputs
+					--V.map (UV.zipWith (*) correctMuls . UV.map selectCW) outputs
 					--computeCorrectiveWeights currWeights inputs outputs nn
 
 		outN = fromIntegral $ V.length nn

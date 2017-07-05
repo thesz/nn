@@ -35,7 +35,7 @@ readInouts' fn nlines = do
 		ils = map (read . ("["++) . (++"]")) $ (if nlines < 1 then id else take nlines) $ lines text
 		flag n = [ if n == i then 1.0 else -1.0 | i <- [0..9]]
 		outs = map (flag . last) ils
-		ins = map (map (\i -> fromIntegral i / 100) . init) ils
+		ins = map (map (\i -> 2*(fromIntegral i / 100)-1) . init) ils
 		toNNData = V.fromList . (map UV.fromList) . transpose
 --	forM_ (zip ins outs) $ \(i,o) -> putStrLn $ "   "++show i++" -> "++show o
 	return (toNNData ins, toNNData outs)
@@ -71,7 +71,7 @@ testNN nnName nn weights = do
 				uouts = UV.fromList $ V.toList outs'
 				mx = maximum $ V.toList outs'
 				outs :: UV.Vector Int
-				outs = UV.map (fromEnum . (==mx)) uouts
+				outs = UV.map ((\x -> x - 1) . (*2) . fromEnum . (==mx)) uouts
 				counts' = UV.zipWith (+) countsEncountered output
 				rights' = UV.zipWith (+) countsRight $ UV.zipWith (*) outs output
 			loop (UV.zipWith (+) sums (UV.zipWith (*) uouts $ UV.map fromIntegral output)) counts' rights' ios
