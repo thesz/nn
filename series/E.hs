@@ -219,6 +219,10 @@ cvExp :: CV -> CV
 cvExp (C x) = C $ exp' x
 cvExp (V y) = V $ UV.map exp' y
 
+cvLog :: CV -> CV
+cvLog (C x) = C $ log x
+cvLog (V y) = V $ UV.map log y
+
 pdiff :: PolyT -> PolyT
 pdiff (S _ ft) = sZipWith cvMul (sFrom 1) ft
 
@@ -249,6 +253,11 @@ pexp u@(S u0 _) = w
 		svExp (C x) = C $ exp' x
 		svExp (V v) = V $ UV.map exp' v
 		w = pintegr (svExp u0) (pmul (pdiff u) w)
+
+plog :: PolyT -> PolyT
+plog u@(S u0 _) = w
+	where
+		w = pintegr (cvLog u0) (pdiv (pdiff u) w)
 
 type CM a = State (Map.Map E PolyT)
 
@@ -433,7 +442,8 @@ trainClassifyLoop computeScore nnName nn inputs outputs = do
 							_ -> 0
 				minFMinT = computeMinT True minF
 				weightsStep = Map.foldl' (\t s -> min t $ computeMinT False s) minFMinT weights
-				t = (sqrt $ weightsStep * minFMinT) / 2 * (prevMinF / maxF)
+				t = --(sqrt $ weightsStep * minFMinT) / 2 * (prevMinF / maxF)
+					minFMinT / 10
 				evalAtT s = sum ms
 					where
 						ts = take takeN $ iterate (*t) 1
