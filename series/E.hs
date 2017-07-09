@@ -30,6 +30,7 @@ data E where
 	Weight	:: Index -> E
 	Bin	:: BinOp -> E -> E -> E
 	Exp	:: E -> E
+	Log	:: E -> E
 	Sum	:: E -> E
 	deriving (Eq, Ord, Show)
 
@@ -62,7 +63,7 @@ instance Fractional E where
 instance Floating E where
 	pi = Const $ C pi
 	exp = Exp
-	log = error "no log for E"
+	log = Log
 	sin = error "no sin for E"
 	cos = error "no cos for E"
 	asin = error "no asin for E"
@@ -97,7 +98,7 @@ instance Fractional EE where
 instance Floating EE where
 	pi = EE pi Map.empty
 	exp (EE a da) = EE (exp a) (Map.map (exp a*) da)
-	log = error "no log for E"
+	log (EE a da) = EE (log a) (Map.map (/a) da)
 	sin = error "no sin for E"
 	cos = error "no cos for E"
 	asin = error "no asin for E"
@@ -139,6 +140,13 @@ softSign :: Floating e => e -> e
 softSign e = (1-e2e)/(1+e2e)
 	where
 		e2e = exp $ (-2)*e
+
+relu :: Floating a => a -> a
+relu x = log (1 + exp x)
+
+-- |RELU with speed control - k controls how fast/slow RELUK converges to x and/or zero.
+reluk :: Floating a => a -> a -> a
+reluk k x = log (1 + exp (k * x)) / k
 
 softSigns = map softSign
 
@@ -397,23 +405,29 @@ findMinT s = undefined
 trainClassifyLoop :: () -> String -> NNet -> NNData -> NNData -> IO Weights
 trainClassifyLoop computeScore nnName nn inputs outputs = do
 	putStrLn $ "Training "++nnName
-	loop True 40000 initialWeights
+	loop True 40000 0.0 (1/sqrt 10) initialWeights
 	where
 		dumpWeights msg weights = do
 			putStrLn $ "weights computed ("++msg++"): "++show (Map.toList weights)
 			return weights
-		loop first 0 weights = dumpWeights "zero loop counter" weights
-		loop first n currWeights = do
+		loop first 0 prevCompMin stepMul weights = dumpWeights "zero loop counter" weights
+		loop first n prevCompMin stepMul currWeights = do
 			putStrLn $ "   train error percentage: "++show wrongsPercent
 			putStrLn $ "  previous min func value: "++show prevMinF
 			putStrLn $ "   current min func value: "++show currMinF
 			putStrLn $ "current poly for min func: "++show (take takeN $ sToList minF)
+			putStrLn $ "         current step mul: "++show stepMul
 			putStrLn $ "            current min t: "++show t
 			putStrLn $ "            current delta: "++show delta
 			if max prevMinF currMinF > 0.001 && delta > 0
-				then loop False (n-1) weights'
+				then loop False (n-1) currMinF stepMul' weights'
 				else dumpWeights "convergence" currWeights
 			where
+				square x = x*x
+				stepMul'
+					| first = stepMul
+					| prevMinF < prevCompMin = stepMul * (square $ prevCompMin / prevMinF)
+					| otherwise = stepMul * (if prevMinF > 0.000001 then square $ prevCompMin / prevMinF else 0.99)
 				currentOuts = nnEvalVec currWeights inputs nn
 				mustMaxOuts :: UV.Vector Double
 				mustMaxOuts = fst $ V.foldl1' (\(avs, aw) (bvs, bw) -> if aw > bw then (avs,aw) else (bvs,bw)) $
@@ -443,7 +457,7 @@ trainClassifyLoop computeScore nnName nn inputs outputs = do
 				minFMinT = computeMinT True minF
 				weightsStep = Map.foldl' (\t s -> min t $ computeMinT False s) minFMinT weights
 				t = --(sqrt $ weightsStep * minFMinT) / 2 * (prevMinF / maxF)
-					minFMinT / 10
+					minFMinT * stepMul
 				evalAtT s = sum ms
 					where
 						ts = take takeN $ iterate (*t) 1
