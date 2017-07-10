@@ -47,34 +47,8 @@ readTestInouts = readInouts' testFile 0
 
 testNN :: String -> NNet -> Weights -> IO ()
 testNN nnName nn weights = do
-	putStrLn $ "Testing "++nnName
-	(testIns, testOuts) <- readTestInouts
-	let	insToTest = map UV.fromList $ transpose $ map UV.toList $ V.toList testIns
-		outsToCheck = map UV.fromList $ map (\xs -> map (fromEnum . (==maximum xs)) xs) $
-				transpose $ map UV.toList $ V.toList testOuts
-		zeroes = UV.fromList (replicate 10 0 :: [Int])
-		list = zip insToTest outsToCheck
-	--forM_ list $ \(i,o) -> putStrLn $ "    "++show i++" -> "++show o
-	loop (UV.fromList $ replicate 10 0) zeroes zeroes list
-	where
-		loop :: UV.Vector Double -> UV.Vector Int -> UV.Vector Int -> [(UV.Vector Double, UV.Vector Int)] -> IO ()
-		loop !sums !countsEncountered !countsRight [] = do
-			putStrLn "Testing statistics:"
-			let	info = zip (UV.toList sums) $ zip3 [0..] (UV.toList countsEncountered) (UV.toList countsRight)
-			forM_ info $ \(s,(d,n,r)) -> let
-					correct = fromIntegral r / fromIntegral n
-				in printf "    digit %d: %5d/%5d (%5.3f), mean sum %8.3f\n" (d :: Int) (r :: Int) (n :: Int) (correct :: Double) s
-			let	summary = fromIntegral (sum  $ UV.toList countsRight) / fromIntegral (sum $ UV.toList countsEncountered)
-			printf "    summary error: %8.5f\n" (summary :: Double)
-		loop !sums !countsEncountered !countsRight ((input,output):ios) = do
-			let	outs' = V.map fromC $ nnEval weights input nn
-				uouts = UV.fromList $ V.toList outs'
-				mx = maximum $ V.toList outs'
-				outs :: UV.Vector Int
-				outs = UV.map ((\x -> x - 1) . (*2) . fromEnum . (==mx)) uouts
-				counts' = UV.zipWith (+) countsEncountered output
-				rights' = UV.zipWith (+) countsRight $ UV.zipWith (*) outs output
-			loop (UV.zipWith (+) sums (UV.zipWith (*) uouts $ UV.map fromIntegral output)) counts' rights' ios
+	testInsOuts <- readTestInouts
+	testNN_ testInsOuts nnName nn weights
 
 computeCorrectiveWeights :: Map.Map Index Double -> NNData -> NNData -> NNet -> NNData
 computeCorrectiveWeights weights inputs expectedOutputs nn = corrWeights

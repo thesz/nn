@@ -2,12 +2,14 @@
 --
 -- Expressions.
 
-{-# LANGUAGE GADTs, RankNTypes, RecordWildCards #-}
+{-# LANGUAGE GADTs, RankNTypes, RecordWildCards, BangPatterns #-}
 
 module E where
 
 import Control.Monad
 import Control.Monad.State
+
+import Data.List (transpose)
 
 import qualified Data.Map as Map
 
@@ -15,6 +17,8 @@ import qualified Data.Vector as V
 import qualified Data.Vector.Unboxed as UV
 
 import Text.Show.Pretty
+
+import Text.Printf
 
 import System.IO
 
@@ -282,8 +286,8 @@ hierSum xs = hierSum $ red xs
 type Weights = Map.Map Index Double
 
 construct :: Weights -> NNData -> NNData -> NNData -> NNet
-	  -> (PolyT, Map.Map Index PolyT, Map.Map Index E)
-construct initials inputsArrays outputsArrays correctiveWeights outputsExprs = (minFunc, weightsIntegr, partials)
+	  -> (PolyT, Map.Map Index PolyT, Map.Map Index E, PolyT)
+construct initials inputsArrays outputsArrays correctiveWeights outputsExprs = (minFunc, weightsIntegr, partials, k)
 	where
 		nSamples = UV.length $ inputsArrays V.! 0
 		scaleMul = --1.0 
@@ -294,6 +298,7 @@ construct initials inputsArrays outputsArrays correctiveWeights outputsExprs = (
 			logsWeightsDerivs <- flip traverse partials $ \e -> liftM (\(l,v) -> (l,either pconst id v)) $ findAdd e
 			return (lmf++concatMap fst (Map.elems logsWeightsDerivs), mf, Map.map snd logsWeightsDerivs)
 		weightsVelocities = Map.map (pintegr (C 0) . pscale (C (-1))) weightsDerivs
+		k = Map.fold (\v s -> padd (pmul v v) s) (pconst $ C 0) weightsVelocities
 		weightsIntegr = Map.intersectionWith (\init v -> pintegr (C init) v) initials weightsVelocities
 		findAdd :: E -> State (Map.Map E (Either CV PolyT)) ([String], Either CV PolyT)
 		findAdd e = do
@@ -402,6 +407,36 @@ findMinT s = undefined
 		l = sToList s
 		n = 9
 
+testNN_ :: (NNData, NNData) -> String -> NNet -> Weights -> IO ()
+testNN_ (testIns, testOuts) nnName nn weights = do
+	putStrLn $ "Testing "++nnName
+	let	insToTest = map UV.fromList $ transpose $ map UV.toList $ V.toList testIns
+		outsToCheck = map UV.fromList $ map (\xs -> map (fromEnum . (==maximum xs)) xs) $
+				transpose $ map UV.toList $ V.toList testOuts
+		zeroes = UV.fromList (replicate 10 0 :: [Int])
+		list = zip insToTest outsToCheck
+	--forM_ list $ \(i,o) -> putStrLn $ "    "++show i++" -> "++show o
+	loop (UV.fromList $ replicate 10 0) zeroes zeroes list
+	where
+		loop :: UV.Vector Double -> UV.Vector Int -> UV.Vector Int -> [(UV.Vector Double, UV.Vector Int)] -> IO ()
+		loop !sums !countsEncountered !countsRight [] = do
+			putStrLn "Testing statistics:"
+			let	info = zip (UV.toList sums) $ zip3 [0..] (UV.toList countsEncountered) (UV.toList countsRight)
+			forM_ info $ \(s,(d,n,r)) -> let
+					correct = fromIntegral r / fromIntegral n
+				in printf "    digit %d: %5d/%5d (%5.3f), mean sum %8.3f\n" (d :: Int) (r :: Int) (n :: Int) (correct :: Double) s
+			let	summary = fromIntegral (sum  $ UV.toList countsRight) / fromIntegral (sum $ UV.toList countsEncountered)
+			printf "    summary success: %8.5f\n" (summary :: Double)
+		loop !sums !countsEncountered !countsRight ((input,output):ios) = do
+			let	outs' = V.map fromC $ nnEval weights input nn
+				uouts = UV.fromList $ V.toList outs'
+				mx = maximum $ V.toList outs'
+				outs :: UV.Vector Int
+				outs = UV.map (fromEnum . (==mx)) uouts
+				counts' = UV.zipWith (+) countsEncountered output
+				rights' = UV.zipWith (+) countsRight $ UV.zipWith (*) outs output
+			loop (UV.zipWith (+) sums (UV.zipWith (*) uouts $ UV.map fromIntegral output)) counts' rights' ios
+
 trainClassifyLoop :: () -> String -> NNet -> NNData -> NNData -> IO Weights
 trainClassifyLoop computeScore nnName nn inputs outputs = do
 	putStrLn $ "Training "++nnName
@@ -413,9 +448,12 @@ trainClassifyLoop computeScore nnName nn inputs outputs = do
 		loop first 0 prevCompMin stepMul weights = dumpWeights "zero loop counter" weights
 		loop first n prevCompMin stepMul currWeights = do
 			putStrLn $ "   train error percentage: "++show wrongsPercent
+			--putStrLn $ "       corrective weights: "++show correctiveWeights
+			testNN_ (inputs, outputs) (nnName ++ " on train") nn currWeights
 			putStrLn $ "  previous min func value: "++show prevMinF
 			putStrLn $ "   current min func value: "++show currMinF
-			putStrLn $ "current poly for min func: "++show (take takeN $ sToList minF)
+			putStrLn $ "current poly for min func: "++show (take 5 $ sToList minF)
+			putStrLn $ "  current poly for k func: "++show (take 5 $ sToList k)
 			putStrLn $ "         current step mul: "++show stepMul
 			putStrLn $ "            current min t: "++show t
 			putStrLn $ "            current delta: "++show delta
@@ -429,18 +467,33 @@ trainClassifyLoop computeScore nnName nn inputs outputs = do
 					| prevMinF < prevCompMin = stepMul * (square $ prevCompMin / prevMinF)
 					| otherwise = stepMul * (if prevMinF > 0.000001 then square $ prevCompMin / prevMinF else 0.99)
 				currentOuts = nnEvalVec currWeights inputs nn
+				currentOutsMaxes = V.foldl1' (\v1 v2 -> UV.zipWith max v1 v2) currentOuts
+				outputsMaxes = V.foldl1' (\v1 v2 -> UV.zipWith max v1 v2) outputs
+				currentOutsMask = V.map (UV.zipWith (==) currentOutsMaxes) currentOuts
+				outputsMask = V.map (UV.zipWith (==) outputsMaxes) outputs
+				maskedCurrentOuts = V.zipWith (\m1 m2 -> UV.zipWith (&&) m1 m2) outputsMask currentOutsMask
+				rights = V.foldl1' (UV.zipWith (||)) maskedCurrentOuts
 				mustMaxOuts :: UV.Vector Double
 				mustMaxOuts = fst $ V.foldl1' (\(avs, aw) (bvs, bw) -> if aw > bw then (avs,aw) else (bvs,bw)) $
 					V.zip currentOuts outputs
 				countsAboveMustMax = V.foldl' (\cnts vs -> UV.zipWith (+) (cnts :: UV.Vector Double) $ UV.zipWith (\a b -> if a >= b then 1 else 0) vs mustMaxOuts)
 					(UV.map (const 0) mustMaxOuts) currentOuts
-				wrongs = UV.map (fromIntegral . fromEnum . (>1)) countsAboveMustMax
+				wrongs = UV.map (fromIntegral . fromEnum . not) rights
+					--UV.map (fromIntegral . fromEnum . (>1)) countsAboveMustMax
 				wrongsPercent :: Double
 				wrongsPercent = UV.sum wrongs * 100 / fromIntegral (UV.length wrongs)
 				normMul = fromIntegral (UV.length countsAboveMustMax) / UV.sum countsAboveMustMax
 				correctMuls = UV.map (*normMul) countsAboveMustMax
-				(minF, weights, partials) = construct currWeights inputs outputs correctiveWeights nn
-				maxF = 4.0
+				(minF, weights, partials, k) = construct currWeights inputs outputs correctiveWeights nn
+				-- kinetic energy.
+				C _: C _: C kb: C _: C ka: _ = sToList k
+				kT2 = negate kb / (2*ka)
+				C mfc: C _: C mfb: C _: C mfa: _ = sToList minF
+				mfd = mfb^2-4*mfa*mfc
+				mfT2
+					| mfd >= 0 = max ((negate mfb - sqrt mfd)/(2*mfa)) ((negate mfb + sqrt mfd)/(2*mfa))
+					| otherwise = -1
+				mfT = if mfT2 > 0 then sqrt mfT2 else -1
 				S (C prevMinF) _ = minF
 				computeMinT forMin s
 					| abs c > th = if a == 0 then 0.01 else sqrt (abs c / abs a)
@@ -456,8 +509,10 @@ trainClassifyLoop computeScore nnName nn inputs outputs = do
 							_ -> 0
 				minFMinT = computeMinT True minF
 				weightsStep = Map.foldl' (\t s -> min t $ computeMinT False s) minFMinT weights
-				t = --(sqrt $ weightsStep * minFMinT) / 2 * (prevMinF / maxF)
-					minFMinT * stepMul
+				t =
+					(if kT2 > 0 then sqrt kT2 else minFMinT) * stepMul
+					--mfT
+					-- minFMinT * stepMul
 				evalAtT s = sum ms
 					where
 						ts = take takeN $ iterate (*t) 1
@@ -467,10 +522,17 @@ trainClassifyLoop computeScore nnName nn inputs outputs = do
 				weights' = Map.map evalAtT weights
 				currMinF = evalAtT minF
 				delta = abs (prevMinF - currMinF)
+				nWrongs = UV.sum wrongs
+				nu = 1/(fromIntegral (UV.length wrongs) + nWrongs)
 				correctiveWeights =
-					V.map (UV.map selectCW) outputs
+					V.map (UV.zipWith f wrongs . UV.map selectCW) outputs
+					--V.map (UV.map selectCW) outputs
 					--V.map (UV.zipWith (*) correctMuls . UV.map selectCW) outputs
 					--computeCorrectiveWeights currWeights inputs outputs nn
+					where
+						b = n/(fromIntegral (UV.length wrongs) + 0.1*nWrongs)/outN
+						a = 1.1*b
+						f wrong w = (b+wrong*(a-b))*w
 
 		outN = fromIntegral $ V.length nn
 		alpha = 1/(2*outN-1)
