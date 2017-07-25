@@ -50,11 +50,13 @@ instance Show L where
 data C = C {
 	  cLits		:: !LSet
 	}
+	deriving (Eq, Ord)
 
 instance Show C where
 	show (C ls) = List.intercalate "+" $ map show $ lsetToList ls
 
 newtype VMap a = VMap { fromVMap :: IntMap.IntMap a }
+	deriving (Eq, Ord)
 
 instance Show a => Show (VMap a) where
 	show (VMap m) = ("vmapFromList "++) $ show $ map (\(i,a) -> (V $ fromIntegral i, a)) $ IntMap.toList m
@@ -63,11 +65,13 @@ vmapToList :: VMap a -> [(V,a)]
 vmapToList (VMap m) = map (\(v,a) -> (V $ fromIntegral v,a)) $ IntMap.toList m
 
 newtype LMap a = LMap { fromLMap :: VMap (a,a) }
+	deriving (Eq, Ord)
 
 lmapToList :: LMap a -> [(L,a)]
 lmapToList (LMap vmap) = concatMap (\(v,(p,n)) -> [(vToL v, p), (lnot $ vToL v,n)]) $ vmapToList vmap
 
 newtype LSet = LSet { fromLSet :: LMap Bool }
+	deriving (Eq, Ord)
 
 lsetToList :: LSet -> [L]
 lsetToList = map fst . filter snd . lmapToList . fromLSet

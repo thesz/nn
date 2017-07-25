@@ -26,6 +26,16 @@ import System.Environment (getArgs)
 
 import Ops
 
+-- Watched literals clause.
+data WLC = WLC !L !L !C
+	deriving (Eq, Ord, Show)
+
+data DSS = DSS {
+	  dssWatchedSets	:: !(LMap (Set.Set WLC))
+	, dssStack		:: [[(L, C)]]
+	, dssSet		:: !LSet
+	}
+
 dpllSolver :: [C] -> [L] -> [L] -> Int -> Int -> [C]
 dpllSolver clauses fixed assignment nconflicts nrestarts =
 	error "dpll!!!"
