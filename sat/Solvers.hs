@@ -24,6 +24,8 @@ import Data.Word
 
 import System.Environment (getArgs)
 
+import ChaCha20
+
 import Ops
 
 -- Watched literals clause.
