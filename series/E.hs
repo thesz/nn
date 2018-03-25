@@ -9,14 +9,16 @@ module E where
 import Control.Monad
 import Control.Monad.State
 
+import Data.Bits
+
+import Data.Int
+
 import Data.List (transpose)
 
 import qualified Data.Map as Map
 
 import qualified Data.Vector as V
 import qualified Data.Vector.Unboxed as UV
-
-import Text.Show.Pretty
 
 import Text.Printf
 
@@ -297,8 +299,9 @@ construct initials inputsArrays outputsArrays correctiveWeights outputsExprs = (
 			(lmf,mf) <- liftM (\(l,v) -> (l, either pconst id v)) $ findAdd goal
 			logsWeightsDerivs <- flip traverse partials $ \e -> liftM (\(l,v) -> (l,either pconst id v)) $ findAdd e
 			return (lmf++concatMap fst (Map.elems logsWeightsDerivs), mf, Map.map snd logsWeightsDerivs)
-		weightsVelocities = Map.map (pintegr (C 0) . pscale (C (-1))) weightsDerivs
+		weightsVelocities = Map.map (pintegr (C 0) . pscale (C (-1)) . toConst ) weightsDerivs
 		k = Map.fold (\v s -> padd (pmul v v) s) (pconst $ C 0) weightsVelocities
+		toConst (S (C c) _) = let zs = S (C 0) zs in S (C $ signum c) zs
 		weightsIntegr = Map.intersectionWith (\init v -> pintegr (C init) v) initials weightsVelocities
 		findAdd :: E -> State (Map.Map E (Either CV PolyT)) ([String], Either CV PolyT)
 		findAdd e = do
@@ -326,7 +329,7 @@ construct initials inputsArrays outputsArrays correctiveWeights outputsExprs = (
 							return (l,either (Left . f) (Right . fmap f) v)
 					modify' $ Map.insert e v
 					let	resV = either (\c -> "constant "++show c) (\s -> "poly with head "++show (take 1 (sToList s))) v
-					return (l++["translating\n"++ppShow e, "result "++resV],v)
+					return (l++["translating\n"++show e, "result "++resV],v)
 		add0 c (S b sb) = S (cvAdd b c) sb
 		sub0 c (S b sb) = S (cvSub c b) (pscale (C (-1)) sb)
 		bin Plus  (Left a)  (Left b)  = Left  $ cvAdd a b
@@ -453,7 +456,7 @@ trainClassifyLoop computeScore nnName nn inputs outputs = do
 			putStrLn $ "  previous min func value: "++show prevMinF
 			putStrLn $ "   current min func value: "++show currMinF
 			putStrLn $ "current poly for min func: "++show (take 5 $ sToList minF)
-			putStrLn $ "  current poly for k func: "++show (take 5 $ sToList k)
+			--putStrLn $ "  current poly for k func: "++show (take 5 $ sToList k)
 			putStrLn $ "         current step mul: "++show stepMul
 			putStrLn $ "            current min t: "++show t
 			putStrLn $ "            current delta: "++show delta
@@ -463,9 +466,9 @@ trainClassifyLoop computeScore nnName nn inputs outputs = do
 			where
 				square x = x*x
 				stepMul'
-					| first = stepMul
+					| True || first = stepMul
 					| prevMinF < prevCompMin = stepMul * (square $ prevCompMin / prevMinF)
-					| otherwise = stepMul * (if prevMinF > 0.000001 then square $ prevCompMin / prevMinF else 0.99)
+					| otherwise = stepMul * (if prevMinF > 1e-10 then square $ prevCompMin / prevMinF else 0.99)
 				currentOuts = nnEvalVec currWeights inputs nn
 				currentOutsMaxes = V.foldl1' (\v1 v2 -> UV.zipWith max v1 v2) currentOuts
 				outputsMaxes = V.foldl1' (\v1 v2 -> UV.zipWith max v1 v2) outputs
@@ -491,7 +494,8 @@ trainClassifyLoop computeScore nnName nn inputs outputs = do
 				C mfc: C _: C mfb: C _: C mfa: _ = sToList minF
 				mfd = mfb^2-4*mfa*mfc
 				mfT2
-					| mfd >= 0 = max ((negate mfb - sqrt mfd)/(2*mfa)) ((negate mfb + sqrt mfd)/(2*mfa))
+					-- | mfd >= 0 = max ((negate mfb - sqrt mfd)/(2*mfa)) ((negate mfb + sqrt mfd)/(2*mfa))
+					| mfb < 0 = abs mfb / (2 * abs mfa)
 					| otherwise = -1
 				mfT = if mfT2 > 0 then sqrt mfT2 else -1
 				S (C prevMinF) _ = minF
@@ -510,8 +514,8 @@ trainClassifyLoop computeScore nnName nn inputs outputs = do
 				minFMinT = computeMinT True minF
 				weightsStep = Map.foldl' (\t s -> min t $ computeMinT False s) minFMinT weights
 				t =
-					(if kT2 > 0 then sqrt kT2 else minFMinT) * stepMul
-					--mfT
+					--(if kT2 > 0 then sqrt kT2 else minFMinT) * stepMul
+					mfT * stepMul
 					-- minFMinT * stepMul
 				evalAtT s = sum ms
 					where
@@ -525,8 +529,8 @@ trainClassifyLoop computeScore nnName nn inputs outputs = do
 				nWrongs = UV.sum wrongs
 				nu = 1/(fromIntegral (UV.length wrongs) + nWrongs)
 				correctiveWeights =
-					V.map (UV.zipWith f wrongs . UV.map selectCW) outputs
-					--V.map (UV.map selectCW) outputs
+					--V.map (UV.zipWith f wrongs . UV.map selectCW) outputs
+					V.map (UV.map selectCW) outputs
 					--V.map (UV.zipWith (*) correctMuls . UV.map selectCW) outputs
 					--computeCorrectiveWeights currWeights inputs outputs nn
 					where
@@ -541,3 +545,20 @@ trainClassifyLoop computeScore nnName nn inputs outputs = do
 
 		initialWeights :: Weights
 		initialWeights = Map.mapWithKey (\k _ -> (if odd (sum k) then negate else id) $ fromIntegral (sum k)/1000) $ nnIndices nn
+
+logmapRNG :: (Floating a, Fractional a) => a -> [a]
+logmapRNG x = each5 $ tail $ iterate (\x -> 4*x*(1-x)) (abs $ sin (x*x))
+	where
+		each5 (_:_:_:_:x:xs) = x : each5 xs
+
+threeGensRNG :: (Floating a, Fractional a, RealFrac a) => a -> [a]
+threeGensRNG x = map ((/fromIntegral two24) . fromIntegral) $ map (.&. (two24-1)) $ map (flip shiftL 12) $ zipWith (*) r1 r2
+	where
+		two24 = 0x1000000 :: Int64
+		p1 = two24 - 3
+		p2 = two24 - 17
+		p3 = two24 - 33
+		s :: Int64
+		s = (+1) $ round $ (* (fromIntegral $ p3 - 2)) $ abs $ sin(x*x)
+		r1 = iterate ((flip mod p1) . (*2)) s
+		r2 = iterate ((flip mod p2) . (*3)) s
