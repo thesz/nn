@@ -287,9 +287,9 @@ hierSum xs = hierSum $ red xs
 
 type Weights = Map.Map Index Double
 
-construct :: Weights -> NNData -> NNData -> NNData -> NNet
+construct :: Double -> Weights -> NNData -> NNData -> NNData -> NNet
 	  -> (PolyT, Map.Map Index PolyT, Map.Map Index E, PolyT)
-construct initials inputsArrays outputsArrays correctiveWeights outputsExprs = (minFunc, weightsIntegr, partials, k)
+construct invMass initials inputsArrays outputsArrays correctiveWeights outputsExprs = (minFunc, weightsIntegr, partials, k)
 	where
 		nSamples = UV.length $ inputsArrays V.! 0
 		scaleMul = --1.0 
@@ -299,7 +299,7 @@ construct initials inputsArrays outputsArrays correctiveWeights outputsExprs = (
 			(lmf,mf) <- liftM (\(l,v) -> (l, either pconst id v)) $ findAdd goal
 			logsWeightsDerivs <- flip traverse partials $ \e -> liftM (\(l,v) -> (l,either pconst id v)) $ findAdd e
 			return (lmf++concatMap fst (Map.elems logsWeightsDerivs), mf, Map.map snd logsWeightsDerivs)
-		weightsVelocities = Map.map (pintegr (C 0) . pscale (C (-1)) . toConst ) weightsDerivs
+		weightsVelocities = Map.map (pintegr (C 0) . pscale (C (-1))) weightsDerivs
 		k = Map.fold (\v s -> padd (pmul v v) s) (pconst $ C 0) weightsVelocities
 		toConst (S (C c) _) = let zs = S (C 0) zs in S (C $ signum c) zs
 		weightsIntegr = Map.intersectionWith (\init v -> pintegr (C init) v) initials weightsVelocities
@@ -313,7 +313,7 @@ construct initials inputsArrays outputsArrays correctiveWeights outputsExprs = (
 						Const cv -> return ([], Left cv)
 						Input i -> return ([],Left . V $ inputsArrays V.! i)
 						Weight i -> do
-							let	w = Map.findWithDefault (error $ "unable to find weight "++show i) i weightsIntegr
+							let	w = pscale (C invMass) $ Map.findWithDefault (error $ "unable to find weight "++show i) i weightsIntegr
 							return ([], Right w)
 						Bin op a b -> do
 							(la,va) <- findAdd a
@@ -443,13 +443,14 @@ testNN_ (testIns, testOuts) nnName nn weights = do
 trainClassifyLoop :: () -> String -> NNet -> NNData -> NNData -> IO Weights
 trainClassifyLoop computeScore nnName nn inputs outputs = do
 	putStrLn $ "Training "++nnName
-	loop True 40000 0.0 (1/sqrt 10) initialWeights
+	loop 0 1 True 200 0.0 (1/sqrt 10) initialWeights
 	where
 		dumpWeights msg weights = do
 			putStrLn $ "weights computed ("++msg++"): "++show (Map.toList weights)
 			return weights
-		loop first 0 prevCompMin stepMul weights = dumpWeights "zero loop counter" weights
-		loop first n prevCompMin stepMul currWeights = do
+		loop iterN invMass first 0 prevCompMin stepMul weights = dumpWeights "zero loop counter" weights
+		loop iterN invMass first n prevCompMin stepMul currWeights = do
+			putStrLn $ "                iteration: "++show iterN
 			putStrLn $ "   train error percentage: "++show wrongsPercent
 			--putStrLn $ "       corrective weights: "++show correctiveWeights
 			testNN_ (inputs, outputs) (nnName ++ " on train") nn currWeights
@@ -461,7 +462,7 @@ trainClassifyLoop computeScore nnName nn inputs outputs = do
 			putStrLn $ "            current min t: "++show t
 			putStrLn $ "            current delta: "++show delta
 			if max prevMinF currMinF > 0.001 && delta > 0
-				then loop False (n-1) currMinF stepMul' weights'
+				then loop (iterN+1) invMass' False (n-1) currMinF stepMul' weights'
 				else dumpWeights "convergence" currWeights
 			where
 				square x = x*x
@@ -469,13 +470,16 @@ trainClassifyLoop computeScore nnName nn inputs outputs = do
 					| True || first = stepMul
 					| prevMinF < prevCompMin = stepMul * (square $ prevCompMin / prevMinF)
 					| otherwise = stepMul * (if prevMinF > 1e-10 then square $ prevCompMin / prevMinF else 0.99)
+				invMass'
+					| delta / (min prevMinF prevCompMin) < 1e-2 = invMass * 1.07
+					| otherwise = invMass * 1.02
 				currentOuts = nnEvalVec currWeights inputs nn
 				currentOutsMaxes = V.foldl1' (\v1 v2 -> UV.zipWith max v1 v2) currentOuts
 				outputsMaxes = V.foldl1' (\v1 v2 -> UV.zipWith max v1 v2) outputs
 				currentOutsMask = V.map (UV.zipWith (==) currentOutsMaxes) currentOuts
 				outputsMask = V.map (UV.zipWith (==) outputsMaxes) outputs
-				maskedCurrentOuts = V.zipWith (\m1 m2 -> UV.zipWith (&&) m1 m2) outputsMask currentOutsMask
-				rights = V.foldl1' (UV.zipWith (||)) maskedCurrentOuts
+				maskedCurrentOuts = V.zipWith (\m1 m2 -> UV.zipWith (==) m1 m2) outputsMask currentOutsMask
+				rights = V.foldl1' (UV.zipWith (&&)) maskedCurrentOuts
 				mustMaxOuts :: UV.Vector Double
 				mustMaxOuts = fst $ V.foldl1' (\(avs, aw) (bvs, bw) -> if aw > bw then (avs,aw) else (bvs,bw)) $
 					V.zip currentOuts outputs
@@ -487,7 +491,7 @@ trainClassifyLoop computeScore nnName nn inputs outputs = do
 				wrongsPercent = UV.sum wrongs * 100 / fromIntegral (UV.length wrongs)
 				normMul = fromIntegral (UV.length countsAboveMustMax) / UV.sum countsAboveMustMax
 				correctMuls = UV.map (*normMul) countsAboveMustMax
-				(minF, weights, partials, k) = construct currWeights inputs outputs correctiveWeights nn
+				(minF, weights, partials, k) = construct invMass currWeights inputs outputs correctiveWeights nn
 				-- kinetic energy.
 				C _: C _: C kb: C _: C ka: _ = sToList k
 				kT2 = negate kb / (2*ka)
@@ -546,9 +550,10 @@ trainClassifyLoop computeScore nnName nn inputs outputs = do
 		initialWeights :: Weights
 		initialWeights = Map.mapWithKey (\k _ -> (if odd (sum k) then negate else id) $ fromIntegral (sum k)/1000) $ nnIndices nn
 
-logmapRNG :: (Floating a, Fractional a) => a -> [a]
-logmapRNG x = each5 $ tail $ iterate (\x -> 4*x*(1-x)) (abs $ sin (x*x))
+logmapRNG :: (Ord a, Floating a, Fractional a) => a -> [a]
+logmapRNG x = betterRnd $ tail $ iterate (\x -> 4*x*(1-x)) (abs $ sin (x*x))
 	where
+		betterRnd = map (\x -> (x-0.3)/0.4) . filter (<0.7) . filter (>=0.3)
 		each5 (_:_:_:_:x:xs) = x : each5 xs
 
 threeGensRNG :: (Floating a, Fractional a, RealFrac a) => a -> [a]

@@ -28,7 +28,7 @@ trainFile = "../pendigs/pendigits.tra"
 testFile = "../pendigs/pendigits.tes"
 
 rpOutputSize :: Int
-rpOutputSize = 100
+rpOutputSize = 120
 
 rpInputSize :: Int
 rpInputSize = 16
@@ -40,8 +40,10 @@ rpTransformMatrix = ws
 			| x < 1/3 = negate 1/3
 			| x > 2/3 = 1/3
 			| otherwise = 0
-		ws = map (map selThird) $ take rpOutputSize $ map (fst) $ tail $
-			iterate (\(_,xs) -> splitAt rpInputSize xs) ([], threeGensRNG (112233.0 :: Double))
+		symm x = 2*x-1
+		ws = map (map symm) $ 
+			take rpOutputSize $ map (fst) $ tail $
+			iterate (\(_,xs) -> splitAt rpInputSize xs) ([], logmapRNG (112233.0 :: Double))
 
 applyRP :: NNData -> NNData
 applyRP nnd = V.fromList $ map app rpTransformMatrix
