@@ -271,7 +271,7 @@ pexp u@(S u0 _) = w
 plog :: PolyT -> PolyT
 plog u@(S u0 _) = w
 	where
-		w = pintegr (cvLog u0) (pdiv (pdiff u) w)
+		w = pintegr (cvLog u0) (pdiv (pdiff u) u)
 
 type CM a = State (Map.Map E PolyT)
 
