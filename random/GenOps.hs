@@ -1,5 +1,6 @@
 module GenOps where
 
+
 import F hiding (main)
 
 nest :: [[String]] -> [String]
@@ -84,7 +85,7 @@ main = do
 			[ o "pi = CBA pi 0 0"
 			, o $ "exp (CBA c b a) = " ++ genUn exp "c" "b" "a"
 			, o $ "log (CBA c b a) = " ++ genUn log "c" "b" "a"
-			--, o $ "sqrt (CBA c b a) = " ++ genUn sqrt "c" "b" "a"
+			, o $ "sqrt (CBA c b a) = " ++ genUn sqrt "c" "b" "a"
 			, o "sin = error \"No sin(CBA)\""
 			, o "cos = error \"No cos(CBA)\""
 			, o "asin = error \"No asin(CBA)\""
